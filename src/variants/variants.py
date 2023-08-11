@@ -38,7 +38,7 @@ def _calc_obs_het_per_var_for_chunk(chunk, pops):
     return {"obs_het_per_var": obs_het_per_var}
 
 
-def _count_alleles_per_var_for_chunk(chunk, pops, alleles, missing_gt):
+def _count_alleles_per_var_for_chunk(chunk, pops, alleles, missing_gt, calc_freqs):
     gts = chunk[GT_ARRAY_ID]
 
     alleles_in_chunk = set(numpy.unique(gts)).difference([missing_gt])
@@ -63,10 +63,17 @@ def _count_alleles_per_var_for_chunk(chunk, pops, alleles, missing_gt):
             else:
                 allele_counts[:, idx - 1] = allele_counts_per_row
         allele_counts = pandas.DataFrame(allele_counts, columns=alleles)
+
         result[pop_id] = {
             "allele_counts": allele_counts,
             "missing_gts": missing_counts,
         }
+
+        if calc_freqs:
+            expected_num_allelic_gts_in_snp = pop_gts.shape[1] * pop_gts.shape[2]
+            num_allelic_gts_per_snp = expected_num_allelic_gts_in_snp - missing_counts
+            allelic_freqs_per_snp = allele_counts / num_allelic_gts_per_snp
+            result[pop_id]["allelic_freqs"] = allelic_freqs_per_snp
 
     return {"counts": result, "alleles": alleles_in_chunk}
 
@@ -120,6 +127,32 @@ class Variants:
         self,
         pops=None,
         alleles=None,
+        missing_gt=MISSING_INT,
+    ):
+        return self._count_alleles_per_var(
+            pops=pops,
+            alleles=alleles,
+            calc_freqs=False,
+            missing_gt=missing_gt,
+        )
+
+    def calc_allelic_freq_per_var(
+        self,
+        pops=None,
+        alleles=None,
+        missing_gt=MISSING_INT,
+    ):
+        return self._count_alleles_per_var(
+            pops=pops,
+            alleles=alleles,
+            calc_freqs=True,
+            missing_gt=missing_gt,
+        )
+
+    def _count_alleles_per_var(
+        self,
+        pops=None,
+        alleles=None,
         calc_freqs=False,
         missing_gt=MISSING_INT,
     ):
@@ -136,11 +169,12 @@ class Variants:
             pops=pops,
             alleles=alleles,
             missing_gt=missing_gt,
+            calc_freqs=calc_freqs,
         )
 
         try:
             collect_allele_counts = _AlleleCountCollector(
-                num_rows=self.array_set.num_rows
+                num_rows=self.array_set.num_rows, calc_freqs=calc_freqs
             )
             result = self.array_set.run_pipeline(
                 map_functs=[count_alleles_per_var_for_chunk],
@@ -163,14 +197,24 @@ class Variants:
             )
 
         if not alleles_asked:
+            if calc_freqs:
+                main_result_key = "allelic_freqs"
+            else:
+                main_result_key = "allele_counts"
             # remove_extra_alleles
             alleles = sorted(result["alleles"])
             for pop, pop_result in result["counts"].items():
-                result["counts"][pop]["allele_counts"] = pop_result[
-                    "allele_counts"
+                result["counts"][pop][main_result_key] = pop_result[
+                    main_result_key
                 ].loc[:, alleles]
 
         result = result["counts"]
+
+        if calc_freqs:
+            result = {
+                pop: pop_result["allelic_freqs"] for pop, pop_result in result.items()
+            }
+
         return result
 
     def get_different_alleles(self, missing_gt=MISSING_INT):
@@ -230,11 +274,19 @@ class _ResultCollectorForArrayDict:
 
 
 class _AlleleCountCollector:
-    def __init__(self, num_rows):
+    def __init__(self, num_rows, calc_freqs):
         self.num_rows = num_rows
         self.row_start = 0
+        self.calc_freqs = calc_freqs
 
     def __call__(self, complete_array_results, processed_chunk):
+        if self.calc_freqs:
+            main_result_key = "allelic_freqs"
+            collect_missing_gts = False
+        else:
+            main_result_key = "allele_counts"
+            collect_missing_gts = True
+
         if complete_array_results is None:
             # create empty complete arrays
             complete_array_results = {
@@ -242,15 +294,16 @@ class _AlleleCountCollector:
                 "alleles": set(),
             }
             for pop, pop_result in processed_chunk["counts"].items():
+                if collect_missing_gts:
+                    complete_array_results["counts"][pop][
+                        "missing_gts"
+                    ] = create_empty_array_like(
+                        pop_result["missing_gts"], num_rows=self.num_rows
+                    )
                 complete_array_results["counts"][pop][
-                    "missing_gts"
+                    main_result_key
                 ] = create_empty_array_like(
-                    pop_result["missing_gts"], num_rows=self.num_rows
-                )
-                complete_array_results["counts"][pop][
-                    "allele_counts"
-                ] = create_empty_array_like(
-                    pop_result["allele_counts"], num_rows=self.num_rows
+                    pop_result[main_result_key], num_rows=self.num_rows
                 )
                 complete_array_results["counts"][pop]
 
@@ -262,15 +315,16 @@ class _AlleleCountCollector:
                 row_end = self.row_start + chunk_num_rows
 
             for pop, pop_result in processed_chunk["counts"].items():
+                if collect_missing_gts:
+                    set_array_chunk(
+                        complete_array_results["counts"][pop]["missing_gts"],
+                        pop_result["missing_gts"],
+                        self.row_start,
+                        row_end,
+                    )
                 set_array_chunk(
-                    complete_array_results["counts"][pop]["missing_gts"],
-                    pop_result["missing_gts"],
-                    self.row_start,
-                    row_end,
-                )
-                set_array_chunk(
-                    complete_array_results["counts"][pop]["allele_counts"],
-                    pop_result["allele_counts"],
+                    complete_array_results["counts"][pop][main_result_key],
+                    pop_result[main_result_key],
                     self.row_start,
                     row_end,
                 )
@@ -297,9 +351,11 @@ if __name__ == "__main__":
             "GPT030610",
         ],
     }
-    if True:
+    if False:
         print(vars.calc_obs_het_per_var(pops=pops))
         # variants.calc_obs_het_per_var()
+    elif False:
+        print(vars.calc_allelic_freq_per_var(pops=pops))
     elif True:
         print(vars.count_alleles_per_var(pops=pops))
     elif False:
@@ -307,8 +363,9 @@ if __name__ == "__main__":
 
 """
 TODO
-maff i don't need alleles
+maf use _count_alleles_per_var_for_chunk, but i don't need alleles
 missing data ratio per snp
 filter per genomic regions, for any region chrom== <pos<
-allele freqs
+unbiased exp. het.
+filter variants
 """
