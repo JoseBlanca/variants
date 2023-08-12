@@ -46,6 +46,8 @@ def _count_alleles_per_var_for_chunk(chunk, pops, alleles, missing_gt, calc_freq
     if alleles is not None:
         if alleles_in_chunk.difference(alleles):
             raise RuntimeError("Chunk more alleles than the given ones")
+    else:
+        alleles = sorted(alleles_in_chunk)
 
     result = {}
     for pop_id, pop_slice in pops.items():
@@ -78,9 +80,22 @@ def _count_alleles_per_var_for_chunk(chunk, pops, alleles, missing_gt, calc_freq
     return {"counts": result, "alleles": alleles_in_chunk}
 
 
+def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt):
+    res = _count_alleles_per_var_for_chunk(
+        chunk, pops, alleles=None, missing_gt=missing_gt, calc_freqs=True
+    )
+    major_allele_freqs = {}
+    for pop, pop_res in res["counts"].items():
+        pop_allelic_freqs = pop_res["allelic_freqs"]
+        major_allele_freqs[pop] = pop_allelic_freqs.max(axis=1)
+    major_allele_freqs = pandas.DataFrame(major_allele_freqs)
+    return {"major_allele_freqs": major_allele_freqs}
+
+
 class Variants:
-    def __init__(self, array_set_dir):
+    def __init__(self, array_set_dir, missing_gt=MISSING_INT):
         self.array_set = ChunkedArraySet(dir=array_set_dir)
+        self.missing_gt = missing_gt
 
     @property
     def samples(self):
@@ -127,26 +142,22 @@ class Variants:
         self,
         pops=None,
         alleles=None,
-        missing_gt=MISSING_INT,
     ):
         return self._count_alleles_per_var(
             pops=pops,
             alleles=alleles,
             calc_freqs=False,
-            missing_gt=missing_gt,
         )
 
     def calc_allelic_freq_per_var(
         self,
         pops=None,
         alleles=None,
-        missing_gt=MISSING_INT,
     ):
         return self._count_alleles_per_var(
             pops=pops,
             alleles=alleles,
             calc_freqs=True,
-            missing_gt=missing_gt,
         )
 
     def _count_alleles_per_var(
@@ -154,7 +165,6 @@ class Variants:
         pops=None,
         alleles=None,
         calc_freqs=False,
-        missing_gt=MISSING_INT,
     ):
         pops = self._calc_pops_idxs(pops)
 
@@ -168,7 +178,7 @@ class Variants:
             _count_alleles_per_var_for_chunk,
             pops=pops,
             alleles=alleles,
-            missing_gt=missing_gt,
+            missing_gt=self.missing_gt,
             calc_freqs=calc_freqs,
         )
 
@@ -187,7 +197,7 @@ class Variants:
                 _count_alleles_per_var_for_chunk,
                 pops=pops,
                 alleles=self.get_different_alleles(),
-                missing_gt=missing_gt,
+                missing_gt=self.missing_gt,
             )
             result = self.array_set.run_pipeline(
                 map_functs=[count_alleles_per_var_for_chunk],
@@ -217,7 +227,7 @@ class Variants:
 
         return result
 
-    def get_different_alleles(self, missing_gt=MISSING_INT):
+    def get_different_alleles(self):
         def accumulate_alleles(accumulated_alleles, new_alleles):
             accumulated_alleles.update(new_alleles)
             return accumulated_alleles
@@ -228,8 +238,25 @@ class Variants:
             reduce_funct=accumulate_alleles,
             reduce_initialializer=set(),
         )
-        result = sorted(result.difference([missing_gt]))
+        result = sorted(result.difference([self.missing_gt]))
         return result
+
+    def calc_major_allele_freq_per_var(self, pops=None):
+        pops = self._calc_pops_idxs(pops)
+
+        calc_maf_per_var_for_chunk = partial(
+            _calc_maf_per_var_for_chunk, pops=pops, missing_gt=self.missing_gt
+        )
+
+        collect_mafs = _ResultCollectorForArrayDict(num_rows=self.num_vars)
+
+        result = self.array_set.run_pipeline(
+            map_functs=[calc_maf_per_var_for_chunk],
+            desired_arrays_to_load_in_chunk=[GT_ARRAY_ID],
+            reduce_funct=collect_mafs,
+            reduce_initialializer=None,
+        )
+        return result["major_allele_freqs"]
 
 
 class _ResultCollectorForArrayDict:
@@ -354,6 +381,8 @@ if __name__ == "__main__":
     if False:
         print(vars.calc_obs_het_per_var(pops=pops))
         # variants.calc_obs_het_per_var()
+    elif True:
+        print(vars.calc_major_allele_freq_per_var(pops=pops))
     elif False:
         print(vars.calc_allelic_freq_per_var(pops=pops))
     elif True:
@@ -363,7 +392,6 @@ if __name__ == "__main__":
 
 """
 TODO
-maf use _count_alleles_per_var_for_chunk, but i don't need alleles
 missing data ratio per snp
 filter per genomic regions, for any region chrom== <pos<
 unbiased exp. het.
