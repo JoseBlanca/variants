@@ -3,28 +3,56 @@ from functools import partial
 import numpy
 import pandas
 
-from chunked_array_set import ChunkedArraySet, create_empty_array_like, set_array_chunk
+from chunked_array_set import (
+    ChunkedArraySet,
+    create_empty_array_like,
+    set_array_chunk,
+    filter_array_chunk_rows,
+)
 
 GT_ARRAY_ID = "gts"
 VARIANTS_ARRAY_ID = "variants"
 ALLELES_ARRAY_ID = "alleles"
 ORIG_VCF_ARRAY_ID = "orig_vcf"
 MISSING_INT = -1
+DEFAULT_NUM_VARIANTS_IN_CHUNK = 10000
 
 
-def _calc_gt_is_missing(gts):
+def _calc_gt_is_missing(gts, gt_is_missing=None):
+    if gt_is_missing is not None:
+        return gt_is_missing
     allele_is_missing = gts == MISSING_INT
     allele_is_missing = numpy.any(allele_is_missing, axis=2)
     return allele_is_missing
 
 
-def _calc_obs_het_per_var_for_chunk(chunk, pops):
-    gts = chunk[GT_ARRAY_ID]
+def _calc_missing_rate_per_var(gts, gt_is_missing=None):
+    gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+
+    missing_rate = gt_is_missing.sum(axis=1) / gt_is_missing.shape[1]
+    return missing_rate
+
+
+def _calc_gts_is_het(gts, gt_is_missing=None):
     gt_is_het = numpy.logical_not(
         numpy.all(gts == gts[:, :, 0][:, :, numpy.newaxis], axis=2)
     )
+    gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+    gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
+    return gt_is_het
+
+
+def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
+    gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
+    obs_het_rate = gt_is_het.sum(axis=1) / gt_is_missing.shape[1]
+    return obs_het_rate
+
+
+def _calc_obs_het_per_var_for_chunk(chunk, pops):
+    gts = chunk[GT_ARRAY_ID]
     gt_is_missing = _calc_gt_is_missing(gts)
     gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
+    gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
 
     obs_het_per_var = {}
     for pop_id, pop_slice in pops.items():
@@ -90,6 +118,57 @@ def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt):
         major_allele_freqs[pop] = pop_allelic_freqs.max(axis=1)
     major_allele_freqs = pandas.DataFrame(major_allele_freqs)
     return {"major_allele_freqs": major_allele_freqs}
+
+
+def _update_remove_mask(remove_mask, new_remove_mask, filtering_info, filter_name):
+    if remove_mask is None:
+        remove_mask = new_remove_mask
+    else:
+        remove_mask = numpy.logical_or(remove_mask, new_remove_mask)
+
+    num_vars_to_remove = numpy.sum(remove_mask)
+    previous_num_vars_removed = filtering_info.get("vars_removed", 0)
+    num_vars_removed_by_this_filter = num_vars_to_remove - previous_num_vars_removed
+
+    try:
+        num_vars_removed_per_filter = filtering_info["num_vars_removed_per_filter"]
+    except KeyError:
+        num_vars_removed_per_filter = {}
+        filtering_info["num_vars_removed_per_filter"] = num_vars_removed_per_filter
+
+    num_vars_removed_per_filter[filter_name] = num_vars_removed_by_this_filter
+
+    return remove_mask
+
+
+def _flt_chunk(chunk, max_var_obs_het, max_missing_rate):
+    gts = chunk[GT_ARRAY_ID]
+
+    remove_mask = None
+    filtering_info = {}
+
+    gt_is_missing = None
+    if max_missing_rate < 1:
+        gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+        missing_rate = _calc_missing_rate_per_var(gts, gt_is_missing=gt_is_missing)
+        this_remove_mask = missing_rate > max_missing_rate
+        remove_mask = _update_remove_mask(
+            remove_mask, this_remove_mask, filtering_info, "missing_rate"
+        )
+    if max_var_obs_het < 1:
+        gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+        obs_het_rate = _calc_obs_het_rate_per_var(gts, gt_is_missing=gt_is_missing)
+        this_remove_mask = obs_het_rate > max_var_obs_het
+        remove_mask = _update_remove_mask(
+            remove_mask, this_remove_mask, filtering_info, "obs_het"
+        )
+
+    flt_chunk = {}
+    for array_id, array in chunk.items():
+        flt_array_chunk = filter_array_chunk_rows(array, numpy.logical_not(remove_mask))
+        flt_chunk[array_id] = flt_array_chunk
+
+    return {"chunk": flt_chunk, "filtering_info": filtering_info}
 
 
 class Variants:
@@ -258,6 +337,63 @@ class Variants:
         )
         return result["major_allele_freqs"]
 
+    def filter_variants(
+        self,
+        out_array_set: ChunkedArraySet,
+        max_var_obs_het: float = 1.0,
+        max_missing_rate: float = 1.0,
+    ):
+        filter_chunk = _ChunkFilterer(
+            max_var_obs_het=max_var_obs_het,
+            max_missing_rate=max_missing_rate,
+        )
+        flt_chunks = self.array_set.run_pipeline(
+            map_functs=[filter_chunk],
+        )
+        out_array_set.extend_chunks(flt_chunks)
+        print(filter_chunk.stats)
+
+
+class _ChunkFilterer:
+    def __init__(self, max_var_obs_het, max_missing_rate):
+        self.max_var_obs_het = max_var_obs_het
+        self.max_missing_rate = max_missing_rate
+        self.stats = None
+
+    def __call__(self, chunk):
+        flt_chunk_res = _flt_chunk(
+            chunk,
+            max_var_obs_het=self.max_var_obs_het,
+            max_missing_rate=self.max_missing_rate,
+        )
+
+        if self.stats is None:
+            stats = {"num_vars_removed_per_filter": {}}
+            self.stats = stats
+        else:
+            stats = self.stats
+
+        for filter_name, vars_removed in flt_chunk_res["filtering_info"][
+            "num_vars_removed_per_filter"
+        ].items():
+            num_vars_previously_removed = stats["num_vars_removed_per_filter"].get(
+                filter_name, 0
+            )
+            stats["num_vars_removed_per_filter"][filter_name] = (
+                num_vars_previously_removed + vars_removed
+            )
+
+        return flt_chunk_res["chunk"]
+
+    def no_more_chunks_so_close(self):
+        chunks = self.num_rows_normalizer.empty_last()
+        try:
+            chunk = self.array_set.extend_chunks(chunks)
+        except RuntimeError:
+            chunk = None
+        if chunk:
+            self.out_array_set.extend_chunks(chunk)
+
 
 class _ResultCollectorForArrayDict:
     def __init__(self, num_rows):
@@ -362,6 +498,9 @@ class _AlleleCountCollector:
 
 
 if __name__ == "__main__":
+    import pathlib
+    import shutil
+
     vars = Variants(
         array_set_dir="/home/jose/analyses/g2psol/variants/core_collection_snp_only.soft-dp-10-gq-20.hard-mean-dp-45-maxmiss-5-monomorph.maf-ge-0.05.biallelic_only"
     )
@@ -382,6 +521,21 @@ if __name__ == "__main__":
         print(vars.calc_obs_het_per_var(pops=pops))
         # variants.calc_obs_het_per_var()
     elif True:
+        array_set_dir = pathlib.Path("/home/jose/analyses/g2psol/tmp/flt_variants")
+        if array_set_dir.exists():
+            shutil.rmtree(
+                array_set_dir,
+            )
+
+        vars.filter_variants(
+            out_array_set=ChunkedArraySet(
+                dir=array_set_dir,
+                desired_num_rows_per_chunk=DEFAULT_NUM_VARIANTS_IN_CHUNK,
+            ),
+            max_var_obs_het=0.1,
+            max_missing_rate=0.3,
+        )
+    elif True:
         print(vars.calc_major_allele_freq_per_var(pops=pops))
     elif False:
         print(vars.calc_allelic_freq_per_var(pops=pops))
@@ -392,8 +546,12 @@ if __name__ == "__main__":
 
 """
 TODO
-missing data ratio per snp
+
 filter per genomic regions, for any region chrom== <pos<
 unbiased exp. het.
-filter variants
+procedure for the aprox. histograms when range is not given:
+- count
+- take random sample
+- do histogram
+
 """
