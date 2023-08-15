@@ -1,6 +1,7 @@
 import gzip
 import itertools
 from io import BytesIO
+from pathlib import Path
 
 import numpy
 import pandas
@@ -8,7 +9,7 @@ import more_itertools
 import allel
 
 from chunked_array_set import ChunkedArraySet
-from .array_iterator import VariantsIterator, ArraysChunk
+from variants.array_iterator import VariantsIterator, ArraysChunk
 
 GT_ARRAY_ID = "gts"
 VARIANTS_ARRAY_ID = "variants"
@@ -32,7 +33,7 @@ POS_FIELD = {
 VARIANT_FIELDS = [CHROM_FIELD, POS_FIELD]
 
 
-class _VCFChunker:
+class _VCFChunker(VariantsIterator):
     def __init__(self, vcf_fhand, num_variants_per_chunk):
         self._lines = gzip.open(vcf_fhand, "rb")
         self.num_variants_per_chunk = num_variants_per_chunk
@@ -41,6 +42,9 @@ class _VCFChunker:
             self._metadata = self._read_metadata()
         except StopIteration:
             raise RuntimeError("Failed to get metadata from VCF")
+
+        self._expected_rows = None
+        self._num_rows_processed = 0
 
     @property
     def samples(self):
@@ -96,13 +100,16 @@ class _VCFChunker:
             orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
             orig_vcf = pandas.DataFrame({"vcf_line": orig_vcf})
 
-            variant_chunk = {
-                VARIANTS_ARRAY_ID: variants_dframe,
-                ALLELES_ARRAY_ID: alleles,
-                GT_ARRAY_ID: gts,
-                ORIG_VCF_ARRAY_ID: orig_vcf,
-            }
-            yield ArraysChunk(variant_chunk)
+            variant_chunk = ArraysChunk(
+                {
+                    VARIANTS_ARRAY_ID: variants_dframe,
+                    ALLELES_ARRAY_ID: alleles,
+                    GT_ARRAY_ID: gts,
+                    ORIG_VCF_ARRAY_ID: orig_vcf,
+                }
+            )
+            self._num_rows_processed += variant_chunk.num_rows
+            yield variant_chunk
 
     def __iter__(self):
         return self
@@ -111,15 +118,26 @@ class _VCFChunker:
         return next(self._chunks)
 
 
+def _get_fhand_rb(fhand):
+    if isinstance(fhand, (str, Path)):
+        return open(fhand, "rb")
+    return fhand
+
+
 def read_vcf(
     fhand, num_variants_per_chunk=DEFAULT_NUM_VARIANTS_PER_CHUNK
 ) -> VariantsIterator:
+    fhand = _get_fhand_rb(fhand)
+
     return _VCFChunker(fhand, num_variants_per_chunk=num_variants_per_chunk)
 
 
 if __name__ == "__main__":
     vcf_path = "/home/jose/analyses/g2psol/source_data/core_collection/G2PSOLMerge.final.snp-around-indels-removed.gwas_reseq.snp_only.soft-dp-10-gq-20.hard-mean-dp-45-maxmiss-5-monomorph.maf-ge-0.05.biallelic_only.vcf.gz"
-    vcf_chunker = VCFChunker(vcf_path, 10000)
+    variants = read_vcf(vcf_path)
+    for chunk in variants:
+        print(chunk.num_rows)
+    1 / 0
     from pathlib import Path
 
     dir = Path(

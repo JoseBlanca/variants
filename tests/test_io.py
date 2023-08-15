@@ -39,3 +39,7 @@ def test_vcf_reader():
     assert variants.samples == ["NA00001", "NA00002", "NA00003"]
     chunk = next(variants)
     assert chunk.num_rows == 5
+
+    variants = read_vcf(get_vcf_sample())
+    list(variants)
+    assert variants.num_vars_processed == 5
