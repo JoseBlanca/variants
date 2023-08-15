@@ -2,7 +2,7 @@ import pytest
 import numpy
 import pandas
 
-from variants.array_iterator import (
+from variants.iterators import (
     Array,
     ArrayChunk,
     ArraysChunk,

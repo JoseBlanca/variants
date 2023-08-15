@@ -5,7 +5,7 @@ import tempfile
 import os
 
 from variants import read_vcf, write_variants
-from variants.array_iterator import ArrayChunk
+from variants.iterators import ArrayChunk
 from variants.vars_io import write_chunks
 from .test_utils import create_normal_numpy_array
 
