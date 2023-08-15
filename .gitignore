@@ -2,3 +2,4 @@
 build/
 src/variants/__pycache__/
 src/variants.egg-info/
+tests/__pycache__/
