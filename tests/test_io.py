@@ -1,8 +1,13 @@
 import io
 import gzip
 from pathlib import Path
+import tempfile
+import os
 
-from variants import read_vcf
+from variants import read_vcf, write_variants
+from variants.array_iterator import ArrayChunk
+from variants.vars_io import write_chunks
+from .test_utils import create_normal_numpy_array
 
 VCF_SAMPLE = b"""##fileformat=VCFv4.0
 ##fileDate=20090805
@@ -42,6 +47,12 @@ def get_big_vcf():
     return get_example_files_dir() / "tomato.vcf.gz"
 
 
+def get_sample_variants():
+    fhand = get_vcf_sample()
+    variants = read_vcf(fhand)
+    return variants
+
+
 def test_vcf_reader():
     fhand = get_vcf_sample()
     variants = read_vcf(fhand)
@@ -56,3 +67,17 @@ def test_vcf_reader():
         variants = read_vcf(fhand)
         list(variants)
         assert variants.num_vars_processed == num_vars
+
+
+def test_write_chunks():
+    # write chunks with arrays
+    variants = get_sample_variants()
+    with tempfile.TemporaryDirectory() as dir:
+        os.rmdir(str(dir))
+        write_variants(str(dir), variants)
+
+    ndarray_2d = create_normal_numpy_array(shape=(10, 5))
+    chunk = ArrayChunk(ndarray_2d)
+    with tempfile.TemporaryDirectory() as dir:
+        os.rmdir(str(dir))
+        write_chunks(str(dir), iter([chunk]))

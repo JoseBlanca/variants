@@ -9,7 +9,12 @@ import more_itertools
 import allel
 
 from chunked_array_set import ChunkedArraySet
-from variants.array_iterator import VariantsIterator, ArraysChunk
+from variants.array_iterator import (
+    VariantsIterator,
+    ArraysChunk,
+    ArrayChunkIterator,
+    DirWithMetadata,
+)
 
 GT_ARRAY_ID = "gts"
 VARIANTS_ARRAY_ID = "variants"
@@ -130,6 +135,28 @@ def read_vcf(
     fhand = _get_fhand_rb(fhand)
 
     return _VCFChunker(fhand, num_variants_per_chunk=num_variants_per_chunk)
+
+
+def write_variants(dir: Path, variants: VariantsIterator):
+    return write_chunks(dir, variants)
+
+
+def write_chunks(dir: Path, chunks: ArrayChunkIterator):
+    dir = DirWithMetadata(dir, exist_ok=False)
+
+    chunks_metadata = []
+    metadata = {"chunks_metadata": chunks_metadata}
+    num_rows_processed = 0
+    for idx, chunk in enumerate(chunks):
+        id = idx
+        chunk_dir = dir.path / f"dataset_chunk:{id:08}"
+        chunk.write(chunk_dir)
+        num_rows = chunk.num_rows
+        num_rows_processed += num_rows
+        chunks_metadata.append({"id": id, "dir": str(chunk_dir), "num_rows": num_rows})
+    dir.metadata = metadata
+
+    return {"num_rows_processed": num_rows_processed}
 
 
 if __name__ == "__main__":

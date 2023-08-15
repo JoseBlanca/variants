@@ -9,10 +9,7 @@ from variants.array_iterator import (
     ArrayChunkIterator,
     resize_chunks,
 )
-
-
-def create_normal_numpy_array(shape, loc=0.0, scale=1.0):
-    return numpy.random.default_rng().normal(loc=loc, scale=scale, size=shape)
+from .test_utils import create_normal_numpy_array
 
 
 def test_array():

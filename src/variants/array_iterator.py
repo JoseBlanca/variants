@@ -1,11 +1,42 @@
 from collections.abc import Iterator
 from collections import defaultdict
+from pathlib import Path
+import json
 
 import numpy
 import pandas
 
 
 ArrayType = tuple[numpy.ndarray, pandas.DataFrame, pandas.Series]
+ARRAY_FILE_EXTENSIONS = {"DataFrame": ".parquet", "ndarray": ".npy"}
+
+
+class DirWithMetadata:
+    def __init__(self, dir: Path, exist_ok=False):
+        self.path = Path(dir)
+
+        if not exist_ok and self.path.exists():
+            raise ValueError(f"dir already exists: {dir}")
+
+        if not self.path.exists():
+            self.path.mkdir()
+
+    def _get_metadata_path(self):
+        return self.path / "metadata.json"
+
+    def _get_metadata(self):
+        metadata_path = self._get_metadata_path()
+        if not metadata_path.exists():
+            metadata = {}
+        else:
+            metadata = json.load(metadata_path.open("rt"))
+        return metadata
+
+    def _set_metadata(self, metadata):
+        metadata_path = self._get_metadata_path()
+        json.dump(metadata, metadata_path.open("wt"))
+
+    metadata = property(_get_metadata, _set_metadata)
 
 
 class Array:
@@ -13,7 +44,7 @@ class Array:
         if isinstance(array, Array):
             array = array.array
         if not isinstance(array, (numpy.ndarray, pandas.DataFrame, pandas.Series)):
-            raise ValueError("Non supported type for array")
+            raise ValueError(f"Non supported type for array: {type(array)}")
         self.array = array
 
     @property
@@ -64,6 +95,33 @@ class ArrayChunk(Chunk):
     def get_rows(self, index):
         return ArrayChunk(self.cargo.get_rows(index))
 
+    def write(self, dir: Path):
+        dir = DirWithMetadata(dir)
+        base_path = dir.path / "array"
+        metadata = _write_array(self.cargo, base_path)
+        dir.metadata = metadata
+
+
+def _write_array(array, base_path):
+    array = array.array
+
+    if not isinstance(array, (numpy.ndarray, pandas.DataFrame, pandas.Series)):
+        raise ValueError(f"Don't know how to store type: {type(array)}")
+
+    type_name = type(array).__name__
+    path = str(base_path) + ARRAY_FILE_EXTENSIONS[type_name]
+
+    if isinstance(array, (pandas.DataFrame, pandas.Series)):
+        array.to_parquet(path)
+        save_method = "parquet"
+    elif isinstance(array, numpy.ndarray):
+        numpy.save(path, array)
+        save_method = "npy"
+    else:
+        raise ValueError(f"Unknown array type: {type(array)}")
+
+    return {"path": path, "save_method": save_method, "type_name": type_name}
+
 
 class ArraysChunk(Chunk):
     def __init__(self, cargo: dict[Array]):
@@ -99,6 +157,17 @@ class ArraysChunk(Chunk):
 
         return ArraysChunk(result)
 
+    def write(self, chunk_dir: Path):
+        dir = DirWithMetadata(dir=chunk_dir)
+        arrays_metadata = []
+        for array_id, array in self.items():
+            base_path = chunk_dir / f"id:{array_id}"
+            array_metadata = _write_array(array, base_path)
+            array_metadata["id"] = array_id
+            array_metadata["path"] = str(array_metadata["path"])
+        metadata = {"arrays_metadata": arrays_metadata}
+        dir.metadata = metadata
+
 
 class ArrayChunkIterator(Iterator[Chunk]):
     def __init__(
@@ -130,6 +199,23 @@ class ArrayChunkIterator(Iterator[Chunk]):
 
             raise StopIteration
         return chunk
+
+
+class VariantsIterator(ArrayChunkIterator):
+    def __init__(self, chunks: Iterator[Chunk], num_vars_expected: int | None = None):
+        super().__init__(chunks, expected_total_num_rows=num_vars_expected)
+
+    @property
+    def num_vars_expected(self):
+        return self.num_rows_expected
+
+    @property
+    def num_vars_processed(self):
+        return self._num_rows_processed
+
+    @property
+    def samples(self):
+        raise NotImplementedError()
 
 
 def concatenate_arrays(arrays: list[Array]) -> Array:
