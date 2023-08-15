@@ -9,6 +9,7 @@ dependencies = [
     "numpy",
     "pyarrow",
     "chunked_array_set",
+    "pytest"
 ]
 
 [build-system]
