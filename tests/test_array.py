@@ -2,7 +2,13 @@ import pytest
 import numpy
 import pandas
 
-from variants.array_iterator import Array, ArrayChunk, ArraysChunk, ArrayChunkIterator
+from variants.array_iterator import (
+    Array,
+    ArrayChunk,
+    ArraysChunk,
+    ArrayChunkIterator,
+    resize_chunks,
+)
 
 
 def create_normal_numpy_array(shape, loc=0.0, scale=1.0):
@@ -40,3 +46,19 @@ def test_chunk_iterator():
     chunks = ArrayChunkIterator(chunks, expected_total_num_rows=20)
     assert chunks.num_rows_expected == 20
     list(chunks)
+
+
+def test_resize_chunks():
+    ndarray_2d = create_normal_numpy_array(shape=(10, 5))
+
+    for n_rows, expected_rows in [
+        (15, [15, 5]),
+        (3, [3, 3, 3, 3, 3, 3, 2]),
+        (10, [10, 10]),
+        (30, [20]),
+    ]:
+        chunks = ArrayChunkIterator([ndarray_2d, ndarray_2d])
+        chunks2 = ArrayChunkIterator([{1: ndarray_2d}, {1: ndarray_2d}])
+        for chunks_ in [chunks, chunks2]:
+            chunks_ = resize_chunks(chunks_, n_rows)
+            assert [chunk.num_rows for chunk in chunks_] == expected_rows
