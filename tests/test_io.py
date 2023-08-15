@@ -1,5 +1,6 @@
 import io
 import gzip
+from pathlib import Path
 
 from variants import read_vcf
 
@@ -33,6 +34,14 @@ def get_vcf_sample():
     return fhand
 
 
+def get_example_files_dir():
+    return Path(__file__).parent / "example_files"
+
+
+def get_big_vcf():
+    return get_example_files_dir() / "tomato.vcf.gz"
+
+
 def test_vcf_reader():
     fhand = get_vcf_sample()
     variants = read_vcf(fhand)
@@ -40,6 +49,10 @@ def test_vcf_reader():
     chunk = next(variants)
     assert chunk.num_rows == 5
 
-    variants = read_vcf(get_vcf_sample())
-    list(variants)
-    assert variants.num_vars_processed == 5
+    variants = read_vcf(get_big_vcf())
+    assert len(variants.samples) == 598
+
+    for num_vars, fhand in ((5, get_vcf_sample()), (33790, get_big_vcf())):
+        variants = read_vcf(fhand)
+        list(variants)
+        assert variants.num_vars_processed == num_vars
