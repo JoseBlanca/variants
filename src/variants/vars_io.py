@@ -9,8 +9,9 @@ import more_itertools
 import allel
 
 from chunked_array_set import ChunkedArraySet
-from variants.array_iterator import (
+from variants.iterators import (
     VariantsIterator,
+    ArrayChunk,
     ArraysChunk,
     ArrayChunkIterator,
     DirWithMetadata,
@@ -138,14 +139,21 @@ def read_vcf(
 
 
 def write_variants(dir: Path, variants: VariantsIterator):
-    return write_chunks(dir, variants)
+    return write_chunks(
+        dir, variants, additional_metadata={"samples": variants.samples}
+    )
 
 
-def write_chunks(dir: Path, chunks: ArrayChunkIterator):
-    dir = DirWithMetadata(dir, exist_ok=False)
+def write_chunks(
+    dir: Path, chunks: ArrayChunkIterator, additional_metadata: dict | None = None
+):
+    dir = DirWithMetadata(dir, exist_ok=False, create_dir=True)
 
     chunks_metadata = []
     metadata = {"chunks_metadata": chunks_metadata}
+    if additional_metadata:
+        metadata.update(additional_metadata)
+
     num_rows_processed = 0
     for idx, chunk in enumerate(chunks):
         id = idx
@@ -154,9 +162,84 @@ def write_chunks(dir: Path, chunks: ArrayChunkIterator):
         num_rows = chunk.num_rows
         num_rows_processed += num_rows
         chunks_metadata.append({"id": id, "dir": str(chunk_dir), "num_rows": num_rows})
+    metadata["num_rows"] = num_rows_processed
     dir.metadata = metadata
 
     return {"num_rows_processed": num_rows_processed}
+
+
+def _load_array(path, array_type, file_format):
+    path = Path(path)
+    if array_type == "ndarray" and file_format == "npy":
+        array = numpy.load(path)
+    elif array_type == "DataFrame" and file_format == "parquet":
+        array = pandas.read_parquet(path)
+    elif array_type == "Series" and file_format == "parquet":
+        array = pandas.read_parquet(path).squeeze()
+    else:
+        raise ValueError(
+            f"Don't know how to load array of type {array_type} from file {file_format}"
+        )
+    return array
+
+
+def _load_array_chunk(array_metadata):
+    array = _load_array(
+        array_metadata["path"],
+        array_type=array_metadata["type_name"],
+        file_format=array_metadata["save_method"],
+    )
+    chunk = ArrayChunk(array)
+    return chunk
+
+
+def _load_arrays_chunk(arrays_metadata):
+    arrays = {}
+    for array_metadata in arrays_metadata:
+        array = _load_array(
+            array_metadata["path"],
+            array_type=array_metadata["type_name"],
+            file_format=array_metadata["type_name"],
+        )
+        id = array_metadata["id"]
+        arrays[id] = array
+    chunk = ArraysChunk(arrays)
+    return chunk
+
+
+def _load_chunks_from_metadata(chunks_metadata):
+    for chunk_info in chunks_metadata:
+        chunk_dir = DirWithMetadata(chunk_info["dir"], create_dir=False)
+        chunk_metadata = chunk_dir.metadata
+        if chunk_metadata["type"] == "ArrayChunk":
+            array_metadata = chunk_metadata["array_metadata"]
+            chunk = _load_array_chunk(array_metadata)
+        elif chunk_metadata["type"] == "ArraysChunk":
+            arrays_metadata = chunk_metadata["arrays_metadata"]
+            chunk = _load_arrays_chunk(arrays_metadata)
+        yield chunk
+
+
+def _load_chunks_and_metadata(dir: Path):
+    dir = DirWithMetadata(dir, create_dir=False)
+    metadata = dir.metadata
+    num_rows = metadata.get("num_rows")
+    chunks_metadata = metadata["chunks_metadata"]
+    chunks = _load_chunks_from_metadata(chunks_metadata)
+    return {
+        "chunks": ArrayChunkIterator(chunks, expected_total_num_rows=num_rows),
+        "metadata": metadata,
+    }
+
+
+def load_chunks(dir: Path) -> ArrayChunkIterator:
+    return _load_chunks_and_metadata(dir)["chunks"]
+
+
+def load_variants(dir: Path) -> VariantsIterator:
+    res = _load_chunks_and_metadata(dir)
+    print("expected", res["chunks"].num_rows_expected)
+    return VariantsIterator(res["chunks"], samples=res["metadata"]["samples"])
 
 
 if __name__ == "__main__":

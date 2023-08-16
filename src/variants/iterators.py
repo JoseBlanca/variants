@@ -99,7 +99,8 @@ class ArrayChunk(Chunk):
     def write(self, dir: Path):
         dir = DirWithMetadata(dir, create_dir=True)
         base_path = dir.path / "array"
-        metadata = _write_array(self.cargo, base_path)
+        metadata = {"type": "ArrayChunk"}
+        metadata["array_metadata"] = _write_array(self.cargo, base_path)
         dir.metadata = metadata
 
 
@@ -112,8 +113,11 @@ def _write_array(array, base_path):
     type_name = type(array).__name__
     path = str(base_path) + ARRAY_FILE_EXTENSIONS[type_name]
 
-    if isinstance(array, (pandas.DataFrame, pandas.Series)):
+    if isinstance(array, pandas.DataFrame):
         array.to_parquet(path)
+        save_method = "parquet"
+    elif isinstance(array, pandas.Series):
+        array.to_frame().to_parquet(path)
         save_method = "parquet"
     elif isinstance(array, numpy.ndarray):
         numpy.save(path, array)
@@ -166,7 +170,7 @@ class ArraysChunk(Chunk):
             array_metadata = _write_array(array, base_path)
             array_metadata["id"] = array_id
             array_metadata["path"] = str(array_metadata["path"])
-        metadata = {"arrays_metadata": arrays_metadata}
+        metadata = {"arrays_metadata": arrays_metadata, "type": "ArraysChunk"}
         dir.metadata = metadata
 
 
@@ -219,8 +223,9 @@ class ArrayChunkIterator(Iterator[Chunk]):
 
 
 class VariantsIterator(ArrayChunkIterator):
-    def __init__(self, chunks: Iterator[Chunk]):
-        super().__init__(chunks)
+    def __init__(self, chunks: Iterator[Chunk], samples: list[str]):
+        super().__init__(chunks, expected_total_num_rows=chunks.num_rows_expected)
+        self._samples = samples
 
     @property
     def num_vars_expected(self):
@@ -232,7 +237,7 @@ class VariantsIterator(ArrayChunkIterator):
 
     @property
     def samples(self):
-        raise NotImplementedError()
+        return self._samples
 
 
 def concatenate_arrays(arrays: list[Array]) -> Array:

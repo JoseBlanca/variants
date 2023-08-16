@@ -4,10 +4,10 @@ from pathlib import Path
 import tempfile
 import os
 
-from variants import read_vcf, write_variants
+from variants import read_vcf, write_variants, load_variants
 from variants.iterators import ArrayChunk
-from variants.vars_io import write_chunks
-from .test_utils import create_normal_numpy_array
+from variants.vars_io import write_chunks, load_chunks
+from .test_utils import create_normal_numpy_array, check_chunks_are_equal
 
 VCF_SAMPLE = b"""##fileformat=VCFv4.0
 ##fileDate=20090805
@@ -75,9 +75,15 @@ def test_write_chunks():
     with tempfile.TemporaryDirectory() as dir:
         os.rmdir(str(dir))
         write_variants(str(dir), variants)
+        variants = load_variants(dir)
+        assert variants.samples == ["NA00001", "NA00002", "NA00003"]
+        assert variants.num_vars_expected == 5
 
     ndarray_2d = create_normal_numpy_array(shape=(10, 5))
     chunk = ArrayChunk(ndarray_2d)
     with tempfile.TemporaryDirectory() as dir:
         os.rmdir(str(dir))
         write_chunks(str(dir), iter([chunk]))
+
+        chunks = load_chunks(str(dir))
+        check_chunks_are_equal(list(chunks), [chunk])
