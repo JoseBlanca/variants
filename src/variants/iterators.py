@@ -12,14 +12,15 @@ ARRAY_FILE_EXTENSIONS = {"DataFrame": ".parquet", "ndarray": ".npy"}
 
 
 class DirWithMetadata:
-    def __init__(self, dir: Path, exist_ok=False):
+    def __init__(self, dir: Path, exist_ok=False, create_dir=False):
         self.path = Path(dir)
 
-        if not exist_ok and self.path.exists():
-            raise ValueError(f"dir already exists: {dir}")
+        if create_dir:
+            if not exist_ok and self.path.exists():
+                raise ValueError(f"dir already exists: {dir}")
 
-        if not self.path.exists():
-            self.path.mkdir()
+            if not self.path.exists():
+                self.path.mkdir()
 
     def _get_metadata_path(self):
         return self.path / "metadata.json"
@@ -96,7 +97,7 @@ class ArrayChunk(Chunk):
         return ArrayChunk(self.cargo.get_rows(index))
 
     def write(self, dir: Path):
-        dir = DirWithMetadata(dir)
+        dir = DirWithMetadata(dir, create_dir=True)
         base_path = dir.path / "array"
         metadata = _write_array(self.cargo, base_path)
         dir.metadata = metadata
@@ -158,7 +159,7 @@ class ArraysChunk(Chunk):
         return ArraysChunk(result)
 
     def write(self, chunk_dir: Path):
-        dir = DirWithMetadata(dir=chunk_dir)
+        dir = DirWithMetadata(dir=chunk_dir, create_dir=True)
         arrays_metadata = []
         for array_id, array in self.items():
             base_path = chunk_dir / f"id:{array_id}"
@@ -173,7 +174,23 @@ class ArrayChunkIterator(Iterator[Chunk]):
     def __init__(
         self, chunks: Iterator[Chunk], expected_total_num_rows: int | None = None
     ):
-        self._expected_rows = expected_total_num_rows
+        try:
+            chunks_rows_expected = chunks.expected_total_num_rows
+        except AttributeError:
+            chunks_rows_expected = None
+        if expected_total_num_rows and chunks_rows_expected:
+            if expected_total_num_rows != chunks_rows_expected:
+                raise ValueError(
+                    f"The expected number of rows given is different than the suggested by the iterator: {expected_total_num_rows} vs {chunks_rows_expected}"
+                )
+        if expected_total_num_rows:
+            expected_rows = expected_total_num_rows
+        elif chunks_rows_expected:
+            expected_rows = chunks_rows_expected
+        else:
+            expected_rows = None
+
+        self._expected_rows = expected_rows
         self._chunks = iter(chunks)
         self._num_rows_processed = 0
 
@@ -202,8 +219,8 @@ class ArrayChunkIterator(Iterator[Chunk]):
 
 
 class VariantsIterator(ArrayChunkIterator):
-    def __init__(self, chunks: Iterator[Chunk], num_vars_expected: int | None = None):
-        super().__init__(chunks, expected_total_num_rows=num_vars_expected)
+    def __init__(self, chunks: Iterator[Chunk]):
+        super().__init__(chunks)
 
     @property
     def num_vars_expected(self):
