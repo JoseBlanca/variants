@@ -170,6 +170,7 @@ class ArraysChunk(Chunk):
             array_metadata = _write_array(array, base_path)
             array_metadata["id"] = array_id
             array_metadata["path"] = str(array_metadata["path"])
+            arrays_metadata.append(array_metadata)
         metadata = {"arrays_metadata": arrays_metadata, "type": "ArraysChunk"}
         dir.metadata = metadata
 
