@@ -7,7 +7,7 @@ import os
 from variants import read_vcf, write_variants, load_variants
 from variants.iterators import ArrayChunk
 from variants.vars_io import write_chunks, load_chunks
-from .test_utils import create_normal_numpy_array, check_chunks_are_equal
+from .test_utils import create_normal_numpy_array, check_chunks_are_equal, get_big_vcf
 
 VCF_SAMPLE = b"""##fileformat=VCFv4.0
 ##fileDate=20090805
@@ -37,14 +37,6 @@ VCF_SAMPLE = b"""##fileformat=VCFv4.0
 def get_vcf_sample():
     fhand = io.BytesIO(gzip.compress(VCF_SAMPLE))
     return fhand
-
-
-def get_example_files_dir():
-    return Path(__file__).parent / "example_files"
-
-
-def get_big_vcf():
-    return get_example_files_dir() / "tomato.vcf.gz"
 
 
 def get_sample_variants():

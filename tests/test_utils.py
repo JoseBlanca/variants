@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy
 import pandas
 
@@ -40,3 +42,11 @@ def check_chunks_are_equal(chunks1, chunks2):
             )
         else:
             ValueError()
+
+
+def get_example_files_dir():
+    return Path(__file__).parent / "example_files"
+
+
+def get_big_vcf():
+    return get_example_files_dir() / "tomato.vcf.gz"

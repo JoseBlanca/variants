@@ -362,3 +362,32 @@ def resize_chunks(chunks: ArrayChunkIterator, desired_num_rows) -> ArrayChunkIte
         if no_chunks_remaining:
             yield buffered_chunk
             break
+
+
+def take_n_variants(chunks: VariantsIterator, num_variants: int) -> VariantsIterator:
+    return VariantsIterator(
+        take_n_rows(chunks, num_rows=num_variants), samples=chunks.samples
+    )
+
+
+def take_n_rows(chunks: ArrayChunkIterator, num_rows: int) -> ArrayChunkIterator:
+    chunks = _take_n_rows_generate_chunks(chunks, num_rows)
+    chunks = ArrayChunkIterator(chunks, expected_total_num_rows=num_rows)
+
+    return chunks
+
+
+def _take_n_rows_generate_chunks(chunks, num_rows):
+    rows_yielded = 0
+    all_chunks_yielded = True
+    for chunk in chunks:
+        if chunk.num_rows + rows_yielded < num_rows:
+            yield chunk
+            rows_yielded += chunk.num_rows
+        else:
+            all_chunks_yielded = False
+            break
+
+    if not all_chunks_yielded:
+        remaing_rows = num_rows - rows_yielded
+        yield chunk.get_rows(slice(0, remaing_rows))
