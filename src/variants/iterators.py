@@ -1,7 +1,9 @@
 from collections.abc import Iterator
+from typing import Callable
 from collections import defaultdict
 from pathlib import Path
 import json
+import functools
 
 import numpy
 import pandas
@@ -273,7 +275,7 @@ def _concatenate_arrays_chunks(chunks) -> ArraysChunk:
     return concatenated_chunk
 
 
-def concatenate_chunks(chunks: list[Chunk]):
+def _concatenate_chunks(chunks: list[Chunk]):
     if len(chunks) == 1:
         return chunks[0]
 
@@ -281,6 +283,16 @@ def concatenate_chunks(chunks: list[Chunk]):
         return _concatenate_arrays_chunks(chunks)
     else:
         return concatenate_arrays([chunk.cargo for chunk in chunks])
+
+
+def accumulate_array_iter_in_mem(chunks: ArrayChunkIterator):
+    chunks = list(chunks)
+    array = _concatenate_chunks(chunks)
+    if isinstance(array, Array):
+        result = array.array
+    elif isinstance(array, ArraysChunk):
+        result = {array_id: array_.array for array_id, array_ in array.items()}
+    return result
 
 
 def _get_num_rows_in_chunk(buffered_chunk):
@@ -311,7 +323,7 @@ def _fill_buffer(buffered_chunk, chunks, desired_num_rows):
     if not chunks_to_concat:
         buffered_chunk = None
     elif len(chunks_to_concat) > 1:
-        buffered_chunk = concatenate_chunks(chunks_to_concat)
+        buffered_chunk = _concatenate_chunks(chunks_to_concat)
     else:
         buffered_chunk = chunks_to_concat[0]
     return buffered_chunk, no_chunks_remaining
@@ -392,3 +404,48 @@ def _take_n_rows_generate_chunks(chunks, num_rows):
     if not all_chunks_yielded:
         remaing_rows = num_rows - rows_yielded
         yield chunk.get_rows(slice(0, remaing_rows))
+
+
+def run_pipeline(
+    chunks: ArrayChunkIterator,
+    map_functs: list[Callable] | None = None,
+    reduce_funct: Callable | None = None,
+    reduce_initialializer=None,
+):
+    if map_functs is None:
+        map_functs = []
+
+    all_mappers_return_same_num_lines = all(
+        [getattr(funct, "returns_same_num_lines", False) for funct in map_functs]
+    )
+    if not reduce_funct and all_mappers_return_same_num_lines:
+        num_rows_expected = getattr(chunks, "num_rows_expected", None)
+    else:
+        num_rows_expected = None
+    try:
+        samples = chunks.samples
+        is_variants = True
+    except AttributeError:
+        is_variants = False
+
+    def funct(item):
+        processed_item = item
+        for one_funct in map_functs:
+            processed_item = one_funct(processed_item)
+        return processed_item
+
+    processed_chunks = map(funct, chunks)
+
+    if reduce_funct:
+        reduced_result = functools.reduce(
+            reduce_funct, processed_chunks, reduce_initialializer
+        )
+        result = reduced_result
+    else:
+        result = ArrayChunkIterator(
+            chunks=processed_chunks, expected_total_num_rows=num_rows_expected
+        )
+        if is_variants:
+            result = VariantsIterator(result, samples=samples)
+
+    return result

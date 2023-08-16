@@ -1,4 +1,5 @@
 import pytest
+import numpy
 import pandas
 
 from variants.iterators import (
@@ -8,6 +9,7 @@ from variants.iterators import (
     ArrayChunkIterator,
     resize_chunks,
     take_n_variants,
+    accumulate_array_iter_in_mem,
 )
 from .test_utils import create_normal_numpy_array, get_big_vcf
 from variants import read_vcf
@@ -60,6 +62,20 @@ def test_resize_chunks():
         for chunks_ in [chunks, chunks2]:
             chunks_ = resize_chunks(chunks_, n_rows)
             assert [chunk.num_rows for chunk in chunks_] == expected_rows
+
+
+def test_to_mem():
+    ndarray_2d = create_normal_numpy_array(shape=(10, 5))
+
+    expected = numpy.vstack([ndarray_2d, ndarray_2d])
+
+    chunks = ArrayChunkIterator([ndarray_2d, ndarray_2d])
+    array = accumulate_array_iter_in_mem(chunks)
+    assert numpy.allclose(array, expected)
+
+    chunks = ArrayChunkIterator([{1: ndarray_2d}, {1: ndarray_2d}])
+    arrays = accumulate_array_iter_in_mem(chunks)
+    assert numpy.allclose(arrays[1], expected)
 
 
 def test_take_n():
