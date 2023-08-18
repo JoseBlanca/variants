@@ -3,7 +3,7 @@ import gzip
 import tempfile
 import os
 
-from variants import read_vcf, write_variants, load_variants, GT_ARRAY_ID
+from variants import read_vcf, write_variants, read_variants, GT_ARRAY_ID
 from variants.iterators import ArrayChunk
 from variants.vars_io import write_chunks, load_chunks
 from .test_utils import create_normal_numpy_array, check_chunks_are_equal, get_big_vcf
@@ -66,7 +66,7 @@ def test_write_chunks():
     with tempfile.TemporaryDirectory() as dir:
         os.rmdir(str(dir))
         write_variants(str(dir), variants)
-        variants = load_variants(dir, desired_arrays=[GT_ARRAY_ID])
+        variants = read_variants(dir, desired_arrays=[GT_ARRAY_ID])
         assert variants.samples == ["NA00001", "NA00002", "NA00003"]
         assert variants.num_vars_expected == 5
         chunk = list(variants)[0]

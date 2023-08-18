@@ -242,11 +242,10 @@ def load_chunks(dir: Path) -> ArrayChunkIterator:
     return _load_chunks_and_metadata(dir)["chunks"]
 
 
-def load_variants(
+def read_variants(
     dir: Path, desired_arrays: list[str] | None = None
 ) -> VariantsIterator:
     res = _load_chunks_and_metadata(dir, desired_arrays=desired_arrays)
-    print("expected", res["chunks"].num_rows_expected)
     return VariantsIterator(res["chunks"], samples=res["metadata"]["samples"])
 
 
