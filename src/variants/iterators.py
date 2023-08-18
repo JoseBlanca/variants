@@ -157,6 +157,9 @@ class ArraysChunk(Chunk):
     def items(self):
         return self.cargo.items()
 
+    def __getitem__(self, key):
+        return self.cargo[key]
+
     def get_rows(self, index):
         result = {}
         for id, array in self.items():
@@ -227,7 +230,9 @@ class ArrayChunkIterator(Iterator[Chunk]):
 
 class VariantsIterator(ArrayChunkIterator):
     def __init__(self, chunks: Iterator[Chunk], samples: list[str]):
-        super().__init__(chunks, expected_total_num_rows=chunks.num_rows_expected)
+        super().__init__(
+            chunks, expected_total_num_rows=getattr(chunks, "num_rows_expected", None)
+        )
         self._samples = samples
 
     @property
