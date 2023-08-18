@@ -4,6 +4,7 @@ from variants.pop_stats import (
     _calc_obs_het_per_var_for_chunk,
     calc_obs_het_stats_per_var,
     _get_different_alleles,
+    _count_alleles_per_var,
 )
 from variants.iterators import ArraysChunk, VariantsIterator
 from variants.vars_io import GT_ARRAY_ID
@@ -42,3 +43,32 @@ def test_obs_het_per_var():
     gts = ArraysChunk({GT_ARRAY_ID: gts})
     variants = VariantsIterator([gts], samples=[1, 2, 3, 4])
     assert _get_different_alleles(variants) == [0, 1, 3]
+
+
+def test_count_alleles_per_var():
+    gts = numpy.array(
+        [
+            # sample1 sample2 sample3 sample4
+            [[0, 0], [1, 1], [-1, -1], [0, 1]],  # snp1
+            [[-1, 1], [0, 4], [0, 1], [1, 3]],  # snp2
+            [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
+        ]
+    )
+    res = _count_alleles_per_var(gts, pops={0: [0, 1, 2, 3]}, calc_freqs=True)
+    assert res["alleles"] == {0, 1, 3, 4}
+    assert numpy.all(res["counts"][0]["missing_gts_per_var"] == [2, 1, 8])
+    expected_counts = [3, 3, 0, 0], [2, 3, 1, 1], [0, 0, 0, 0]
+    assert numpy.all(res["counts"][0]["allele_counts"].values == expected_counts)
+    expected_freqs = [
+        [
+            0.5,
+            0.5,
+            0.0,
+            0.0,
+        ],
+        [0.28571429, 0.42857143, 0.14285714, 0.14285714],
+        [numpy.nan, numpy.nan, numpy.nan, numpy.nan],
+    ]
+    assert numpy.allclose(
+        res["counts"][0]["allelic_freqs"].values, expected_freqs, equal_nan=True
+    )
