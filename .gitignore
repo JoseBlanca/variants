@@ -3,3 +3,6 @@ build/
 src/variants/__pycache__/
 src/variants.egg-info/
 tests/__pycache__/
+g2psol_tests.py
+variantsn.py
+src/variants/variants_old.py
