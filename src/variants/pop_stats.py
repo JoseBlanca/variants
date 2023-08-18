@@ -143,3 +143,18 @@ def calc_obs_het_stats_per_var(
         "hist_bin_edges": hist_bins_edges,
         "hist_counts": accumulated_result["hist_counts"],
     }
+
+
+def _get_different_alleles(vars):
+    def accumulate_alleles(accumulated_alleles, new_alleles):
+        accumulated_alleles.update(new_alleles)
+        return accumulated_alleles
+
+    result = run_pipeline(
+        vars,
+        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID].array)],
+        reduce_funct=accumulate_alleles,
+        reduce_initialializer=set(),
+    )
+    result = sorted(result.difference([MISSING_INT]))
+    return result

@@ -3,6 +3,7 @@ import numpy
 from variants.pop_stats import (
     _calc_obs_het_per_var_for_chunk,
     calc_obs_het_stats_per_var,
+    _get_different_alleles,
 )
 from variants.iterators import ArraysChunk, VariantsIterator
 from variants.vars_io import GT_ARRAY_ID
@@ -27,3 +28,17 @@ def test_obs_het_per_var():
     assert numpy.allclose(res["mean"].loc[0], [0.5])
     assert numpy.allclose(res["hist_bin_edges"], [0.0, 0.25, 0.5, 0.75, 1.0])
     assert all(res["hist_counts"][0] == [0, 1, 1, 0])
+
+
+def test_obs_het_per_var():
+    gts = numpy.array(
+        [
+            # sample1 sample2 sample3 sample4
+            [[0, 0], [1, 1], [-1, -1], [0, 1]],  # snp1
+            [[-1, 1], [0, 0], [0, 1], [1, 3]],  # snp2
+            [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
+        ]
+    )
+    gts = ArraysChunk({GT_ARRAY_ID: gts})
+    variants = VariantsIterator([gts], samples=[1, 2, 3, 4])
+    assert _get_different_alleles(variants) == [0, 1, 3]
