@@ -8,4 +8,4 @@ from .vars_io import (
     ALLELES_ARRAY_ID,
     ORIG_VCF_ARRAY_ID,
 )
-from .pop_stats import calc_obs_het_stats_per_var
+from .pop_stats import calc_obs_het_stats_per_var, calc_major_allele_stats_per_var

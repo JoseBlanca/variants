@@ -5,12 +5,14 @@ from variants.pop_stats import (
     calc_obs_het_stats_per_var,
     _get_different_alleles,
     _count_alleles_per_var,
+    _calc_maf_per_var_for_chunk,
+    calc_major_allele_stats_per_var,
 )
 from variants.iterators import ArraysChunk, VariantsIterator
 from variants.vars_io import GT_ARRAY_ID
 
 
-def test_obs_het_per_var():
+def test_obs_het_stats():
     gts = numpy.array(
         [
             # sample1 sample2 sample3 sample4
@@ -72,3 +74,27 @@ def test_count_alleles_per_var():
     assert numpy.allclose(
         res["counts"][0]["allelic_freqs"].values, expected_freqs, equal_nan=True
     )
+
+
+def test_maf_stats():
+    gts = numpy.array(
+        [
+            # sample1 sample2 sample3 sample4
+            [[0, 0], [1, 1], [-1, -1], [0, 1]],  # snp1
+            [[-1, 1], [1, 0], [0, 1], [1, 0]],  # snp2
+            [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
+        ]
+    )
+    gts = ArraysChunk({GT_ARRAY_ID: gts})
+    res = _calc_maf_per_var_for_chunk(gts, pops={0: slice(None, None)})
+    assert numpy.allclose(
+        res["major_allele_freqs_per_var"][0].values,
+        [0.5, 0.571429, numpy.nan],
+        equal_nan=True,
+    )
+
+    variants = VariantsIterator([gts], samples=[1, 2, 3, 4])
+    res = calc_major_allele_stats_per_var(variants, hist_kwargs={"num_bins": 4})
+    assert numpy.allclose(res["mean"].loc[0], [0.535714])
+    assert numpy.allclose(res["hist_bin_edges"], [0.0, 0.25, 0.5, 0.75, 1.0])
+    assert all(res["hist_counts"][0] == [0, 0, 2, 0])

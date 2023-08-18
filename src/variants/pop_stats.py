@@ -201,3 +201,54 @@ def _count_alleles_per_var(gts, pops, calc_freqs, alleles=None, missing_gt=MISSI
             result[pop_id]["allelic_freqs"] = allelic_freqs_per_snp
 
     return {"counts": result, "alleles": alleles_in_chunk}
+
+
+def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
+    res = _count_alleles_per_var(
+        chunk[GT_ARRAY_ID].array,
+        pops,
+        alleles=None,
+        missing_gt=missing_gt,
+        calc_freqs=True,
+    )
+    major_allele_freqs = {}
+    for pop, pop_res in res["counts"].items():
+        pop_allelic_freqs = pop_res["allelic_freqs"]
+        major_allele_freqs[pop] = pop_allelic_freqs.max(axis=1)
+    major_allele_freqs = pandas.DataFrame(major_allele_freqs)
+    return {"major_allele_freqs_per_var": major_allele_freqs}
+
+
+def calc_major_allele_stats_per_var(
+    variants: VariantsIterator,
+    pops: list[str] | None = None,
+    hist_kwargs=None,
+) -> ArrayChunkIterator:
+    if hist_kwargs is None:
+        hist_kwargs = {}
+    hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
+
+    pops = _calc_pops_idxs(pops, variants.samples)
+
+    calc_maf_per_var_for_chunk = partial(_calc_maf_per_var_for_chunk, pops=pops)
+
+    collect_stats_from_pop_dframes = partial(
+        _collect_stats_from_pop_dframes, hist_bins_edges=hist_bins_edges
+    )
+
+    accumulated_result = run_pipeline(
+        variants,
+        map_functs=[
+            calc_maf_per_var_for_chunk,
+            lambda x: x["major_allele_freqs_per_var"],
+        ],
+        reduce_funct=collect_stats_from_pop_dframes,
+        reduce_initialializer=None,
+    )
+
+    mean = accumulated_result["sum_per_pop"] / accumulated_result["total_num_rows"]
+    return {
+        "mean": mean,
+        "hist_bin_edges": hist_bins_edges,
+        "hist_counts": accumulated_result["hist_counts"],
+    }
