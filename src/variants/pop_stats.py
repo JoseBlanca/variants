@@ -1,9 +1,11 @@
+from collections.abc import Iterator
 from functools import partial
+import itertools
 
 import numpy
 import pandas
 
-from variants.iterators import VariantsIterator, ArrayChunkIterator, run_pipeline
+from variants.iterators import run_pipeline, ArraysChunk
 from variants.vars_io import GT_ARRAY_ID, MISSING_INT
 
 from enum import Enum
@@ -43,7 +45,7 @@ def _calc_gts_is_het(gts, gt_is_missing=None):
 
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):
-    gts = chunk[GT_ARRAY_ID].array
+    gts = chunk[GT_ARRAY_ID]
     gt_is_missing = _calc_gt_is_missing(gts)
     gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
     gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
@@ -114,15 +116,16 @@ def _collect_stats_from_pop_dframes(
 
 
 def calc_obs_het_stats_per_var(
-    variants: VariantsIterator,
+    variants: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
-) -> ArrayChunkIterator:
+) -> Iterator[ArraysChunk]:
     if hist_kwargs is None:
         hist_kwargs = {}
     hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
 
-    pops = _calc_pops_idxs(pops, variants.samples)
+    samples, variants = _get_samples_from_variants(variants)
+    pops = _calc_pops_idxs(pops, samples)
 
     calc_obs_het_per_var_for_chunk = partial(_calc_obs_het_per_var_for_chunk, pops=pops)
 
@@ -152,7 +155,7 @@ def _get_different_alleles(vars):
 
     result = run_pipeline(
         vars,
-        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID].array)],
+        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID])],
         reduce_funct=accumulate_alleles,
         reduce_initialializer=set(),
     )
@@ -205,7 +208,7 @@ def _count_alleles_per_var(gts, pops, calc_freqs, alleles=None, missing_gt=MISSI
 
 def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
     res = _count_alleles_per_var(
-        chunk[GT_ARRAY_ID].array,
+        chunk[GT_ARRAY_ID],
         pops,
         alleles=None,
         missing_gt=missing_gt,
@@ -219,16 +222,27 @@ def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
     return {"major_allele_freqs_per_var": major_allele_freqs}
 
 
+def _get_samples_from_variants(variants):
+    try:
+        chunk = next(variants)
+    except StopIteration:
+        raise ValueError("No variants")
+    variants = itertools.chain([chunk], variants)
+    return chunk.samples, variants
+
+
 def calc_major_allele_stats_per_var(
-    variants: VariantsIterator,
+    variants: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
-) -> ArrayChunkIterator:
+) -> Iterator[ArraysChunk]:
     if hist_kwargs is None:
         hist_kwargs = {}
     hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
 
-    pops = _calc_pops_idxs(pops, variants.samples)
+    samples, variants = _get_samples_from_variants(variants)
+
+    pops = _calc_pops_idxs(pops, samples)
 
     calc_maf_per_var_for_chunk = partial(_calc_maf_per_var_for_chunk, pops=pops)
 

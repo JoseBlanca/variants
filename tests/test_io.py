@@ -4,9 +4,8 @@ import tempfile
 import os
 
 from variants import read_vcf, write_variants, read_variants, GT_ARRAY_ID
-from variants.iterators import ArrayChunk
-from variants.vars_io import write_chunks, load_chunks
-from .test_utils import create_normal_numpy_array, check_chunks_are_equal, get_big_vcf
+from variants.vars_io import read_vcf_metadata, read_variants_metadata
+from .test_utils import get_big_vcf
 
 VCF_SAMPLE = b"""##fileformat=VCFv4.0
 ##fileDate=20090805
@@ -45,38 +44,41 @@ def get_sample_variants():
 
 
 def test_vcf_reader():
+    assert read_vcf_metadata(get_vcf_sample())["samples"] == [
+        "NA00001",
+        "NA00002",
+        "NA00003",
+    ]
     fhand = get_vcf_sample()
     variants = read_vcf(fhand)
-    assert variants.samples == ["NA00001", "NA00002", "NA00003"]
     chunk = next(variants)
     assert chunk.num_rows == 5
 
-    variants = read_vcf(get_big_vcf())
-    assert len(variants.samples) == 598
+    assert len(read_vcf_metadata(get_big_vcf())["samples"]) == 598
 
     for num_vars, fhand in ((5, get_vcf_sample()), (33790, get_big_vcf())):
         variants = read_vcf(fhand)
-        list(variants)
-        assert variants.num_vars_processed == num_vars
+        total_num_variants = sum((chunk.num_rows for chunk in variants))
+        assert total_num_variants == num_vars
 
 
 def test_write_chunks():
     # write chunks with arrays
+
     variants = get_sample_variants()
     with tempfile.TemporaryDirectory() as dir:
         os.rmdir(str(dir))
         write_variants(str(dir), variants)
+
+        metadata = read_variants_metadata(str(dir))
+        assert metadata["samples"] == [
+            "NA00001",
+            "NA00002",
+            "NA00003",
+        ]
+        assert metadata["total_num_variants"] == 5
+
         variants = read_variants(dir, desired_arrays=[GT_ARRAY_ID])
-        assert variants.samples == ["NA00001", "NA00002", "NA00003"]
-        assert variants.num_vars_expected == 5
         chunk = list(variants)[0]
-        assert list(chunk.cargo.keys()) == [GT_ARRAY_ID]
-
-    ndarray_2d = create_normal_numpy_array(shape=(10, 5))
-    chunk = ArrayChunk(ndarray_2d)
-    with tempfile.TemporaryDirectory() as dir:
-        os.rmdir(str(dir))
-        write_chunks(str(dir), iter([chunk]))
-
-        chunks = load_chunks(str(dir))
-        check_chunks_are_equal(list(chunks), [chunk])
+        assert chunk.source_metadata["samples"] == ["NA00001", "NA00002", "NA00003"]
+        assert list(chunk.arrays.keys()) == [GT_ARRAY_ID]

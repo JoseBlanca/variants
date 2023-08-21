@@ -1,19 +1,18 @@
+from collections.abc import Iterator
 import gzip
 import itertools
 from io import BytesIO
 from pathlib import Path
+import copy
 
 import numpy
 import pandas
 import more_itertools
 import allel
 
-from chunked_array_set import ChunkedArraySet
 from variants.iterators import (
-    VariantsIterator,
-    ArrayChunk,
     ArraysChunk,
-    ArrayChunkIterator,
+    VariantsChunk,
     DirWithMetadata,
 )
 
@@ -39,113 +38,128 @@ POS_FIELD = {
 VARIANT_FIELDS = [CHROM_FIELD, POS_FIELD]
 
 
-class _VCFChunker(VariantsIterator):
-    def __init__(self, vcf_fhand, num_variants_per_chunk):
-        self._lines = gzip.open(vcf_fhand, "rb")
-        self.num_variants_per_chunk = num_variants_per_chunk
-
-        try:
-            self._metadata = self._read_metadata()
-        except StopIteration:
-            raise RuntimeError("Failed to get metadata from VCF")
-
-        self._expected_rows = None
-        self._num_rows_processed = 0
-
-    @property
-    def samples(self):
-        return self._metadata["samples"]
-
-    def _read_metadata(self):
-        header_lines = []
-        for line in self._lines:
-            if line.startswith(b"#"):
-                header_lines.append(line)
-            else:
-                lines = itertools.chain([line], self._lines)
-                break
-        self._lines = lines
-
-        header_lines = [line.decode() for line in header_lines]
-
-        items = header_lines[-1].strip().split("\t")
-        assert items[8] == "FORMAT"
-        samples = [sample for sample in items[9:]]
-        self._chunks = self._get_chunks()
-
-        return {"header_lines": header_lines, "samples": samples}
-
-    def _get_chunks(self):
-        header_lines = [line.encode() for line in self._metadata["header_lines"]]
-        for lines_in_chunk in more_itertools.chunked(
-            self._lines, self.num_variants_per_chunk
-        ):
-            vcf_chunk = BytesIO(b"".join(header_lines + lines_in_chunk))
-            allel_arrays = allel.read_vcf(vcf_chunk)
-            del vcf_chunk
-
-            variants_dframe = {}
-            for field_data in VARIANT_FIELDS:
-                col_name = field_data["dframe_column"]
-                col_data = pandas.Series(
-                    allel_arrays[field_data["scikit-allel_path"]],
-                    dtype=field_data["pandas_dtype"],
-                )
-                variants_dframe[col_name] = col_data
-            variants_dframe = pandas.DataFrame(variants_dframe)
-
-            ref = allel_arrays["variants/REF"]
-            ref = ref.reshape((ref.shape[0], 1))
-            alt = allel_arrays["variants/ALT"]
-            alleles = pandas.DataFrame(
-                numpy.hstack([ref, alt]), dtype=STRING_PANDAS_DTYPE
-            )
-
-            gts = allel_arrays["calldata/GT"]
-
-            orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
-            orig_vcf = pandas.DataFrame({"vcf_line": orig_vcf})
-
-            variant_chunk = ArraysChunk(
-                {
-                    VARIANTS_ARRAY_ID: variants_dframe,
-                    ALLELES_ARRAY_ID: alleles,
-                    GT_ARRAY_ID: gts,
-                    ORIG_VCF_ARRAY_ID: orig_vcf,
-                }
-            )
-            self._num_rows_processed += variant_chunk.num_rows
-            yield variant_chunk
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return next(self._chunks)
-
-
 def _get_fhand_rb(fhand):
     if isinstance(fhand, (str, Path)):
         return open(fhand, "rb")
     return fhand
 
 
+def _read_vcf_metadata(lines):
+    header_lines = []
+    for line in lines:
+        if line.startswith(b"#"):
+            header_lines.append(line)
+        else:
+            lines = itertools.chain([line], lines)
+            break
+
+    header_lines = [line.decode() for line in header_lines]
+
+    items = header_lines[-1].strip().split("\t")
+    assert items[8] == "FORMAT"
+    samples = [sample for sample in items[9:]]
+
+    return {"header_lines": header_lines, "samples": samples, "lines": lines}
+
+
+def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk):
+    header_lines = [line.encode() for line in source_metadata["header_lines"]]
+    for lines_in_chunk in more_itertools.chunked(lines, num_variants_per_chunk):
+        vcf_chunk = BytesIO(b"".join(header_lines + lines_in_chunk))
+        allel_arrays = allel.read_vcf(vcf_chunk)
+        del vcf_chunk
+
+        variants_dframe = {}
+        for field_data in VARIANT_FIELDS:
+            col_name = field_data["dframe_column"]
+            col_data = pandas.Series(
+                allel_arrays[field_data["scikit-allel_path"]],
+                dtype=field_data["pandas_dtype"],
+            )
+            variants_dframe[col_name] = col_data
+        variants_dframe = pandas.DataFrame(variants_dframe)
+
+        ref = allel_arrays["variants/REF"]
+        ref = ref.reshape((ref.shape[0], 1))
+        alt = allel_arrays["variants/ALT"]
+        alleles = pandas.DataFrame(numpy.hstack([ref, alt]), dtype=STRING_PANDAS_DTYPE)
+
+        gts = allel_arrays["calldata/GT"]
+
+        orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
+        orig_vcf = pandas.DataFrame({"vcf_line": orig_vcf})
+
+        variant_chunk = VariantsChunk(
+            {
+                VARIANTS_ARRAY_ID: variants_dframe,
+                ALLELES_ARRAY_ID: alleles,
+                GT_ARRAY_ID: gts,
+                ORIG_VCF_ARRAY_ID: orig_vcf,
+            },
+            source_metadata=source_metadata,
+        )
+        yield variant_chunk
+
+
 def read_vcf(
     fhand, num_variants_per_chunk=DEFAULT_NUM_VARIANTS_PER_CHUNK
-) -> VariantsIterator:
+) -> Iterator[ArraysChunk]:
     fhand = _get_fhand_rb(fhand)
 
-    return _VCFChunker(fhand, num_variants_per_chunk=num_variants_per_chunk)
+    lines = gzip.open(fhand, "rb")
+
+    try:
+        res = _read_vcf_metadata(lines)
+    except StopIteration:
+        raise RuntimeError("Failed to get metadata from VCF")
+
+    source_metadata = {"header_lines": res["header_lines"], "samples": res["samples"]}
+    lines = res["lines"]
+
+    yield from _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk)
 
 
-def write_variants(dir: Path, variants: VariantsIterator):
-    return write_chunks(
-        dir, variants, additional_metadata={"samples": variants.samples}
-    )
+def read_vcf_metadata(fhand):
+    fhand = _get_fhand_rb(fhand)
+    lines = gzip.open(fhand, "rb")
+    res = _read_vcf_metadata(lines)
+    del res["lines"]
+
+    return res
+
+
+def write_variants(dir: Path, variants: Iterator[ArraysChunk]):
+    try:
+        chunk = next(variants)
+    except StopIteration:
+        raise ValueError("No variants to write")
+
+    source_metadata = chunk.source_metadata
+    try:
+        metadata = {"samples": source_metadata["samples"]}
+    except KeyError:
+        raise ValueError("No samples in source_metadata for these variant chunks")
+
+    if "total_num_rows" in source_metadata:
+        expected_num_rows = source_metadata["total_num_rows"]
+    else:
+        expected_num_rows = None
+
+    variants = itertools.chain([chunk], variants)
+
+    # samples num_variants
+    write_chunks(dir, variants, additional_metadata=metadata)
+
+    dir = DirWithMetadata(dir, create_dir=False)
+    metadata = dir.metadata
+    if expected_num_rows:
+        assert metadata["total_num_rows"] == expected_num_rows
+    metadata["total_num_variants"] = metadata["total_num_rows"]
+    dir.metadata = metadata
 
 
 def write_chunks(
-    dir: Path, chunks: ArrayChunkIterator, additional_metadata: dict | None = None
+    dir: Path, chunks: Iterator[ArraysChunk], additional_metadata: dict | None = None
 ):
     dir = DirWithMetadata(dir, exist_ok=False, create_dir=True)
 
@@ -162,10 +176,8 @@ def write_chunks(
         num_rows = chunk.num_rows
         num_rows_processed += num_rows
         chunks_metadata.append({"id": id, "dir": str(chunk_dir), "num_rows": num_rows})
-    metadata["num_rows"] = num_rows_processed
+    metadata["total_num_rows"] = num_rows_processed
     dir.metadata = metadata
-
-    return {"num_rows_processed": num_rows_processed}
 
 
 def _load_array(path, array_type, file_format):
@@ -183,17 +195,7 @@ def _load_array(path, array_type, file_format):
     return array
 
 
-def _load_array_chunk(array_metadata):
-    array = _load_array(
-        array_metadata["path"],
-        array_type=array_metadata["type_name"],
-        file_format=array_metadata["save_method"],
-    )
-    chunk = ArrayChunk(array)
-    return chunk
-
-
-def _load_arrays_chunk(arrays_metadata, desired_arrays):
+def _load_arrays_chunk(arrays_metadata, desired_arrays, source_metadata):
     arrays = {}
     for array_metadata in arrays_metadata:
         id = array_metadata["id"]
@@ -205,11 +207,15 @@ def _load_arrays_chunk(arrays_metadata, desired_arrays):
             file_format=array_metadata["save_method"],
         )
         arrays[id] = array
-    chunk = ArraysChunk(arrays)
+    chunk = ArraysChunk(arrays, source_metadata)
     return chunk
 
 
-def _load_chunks_from_metadata(chunks_metadata, desired_arrays):
+def _read_chunks(
+    chunks_metadata,
+    source_metadata,
+    desired_arrays: list[str] | None = None,
+):
     for chunk_info in chunks_metadata:
         chunk_dir = DirWithMetadata(chunk_info["dir"], create_dir=False)
         chunk_metadata = chunk_dir.metadata
@@ -222,47 +228,33 @@ def _load_chunks_from_metadata(chunks_metadata, desired_arrays):
             chunk = _load_array_chunk(array_metadata)
         elif chunk_metadata["type"] == "ArraysChunk":
             arrays_metadata = chunk_metadata["arrays_metadata"]
-            chunk = _load_arrays_chunk(arrays_metadata, desired_arrays)
+            chunk = _load_arrays_chunk(
+                arrays_metadata,
+                desired_arrays,
+                source_metadata=copy.deepcopy(source_metadata),
+            )
         yield chunk
-
-
-def _load_chunks_and_metadata(dir: Path, desired_arrays: list[str] | None = None):
-    dir = DirWithMetadata(dir, create_dir=False)
-    metadata = dir.metadata
-    num_rows = metadata.get("num_rows")
-    chunks_metadata = metadata["chunks_metadata"]
-    chunks = _load_chunks_from_metadata(chunks_metadata, desired_arrays=desired_arrays)
-    return {
-        "chunks": ArrayChunkIterator(chunks, expected_total_num_rows=num_rows),
-        "metadata": metadata,
-    }
-
-
-def load_chunks(dir: Path) -> ArrayChunkIterator:
-    return _load_chunks_and_metadata(dir)["chunks"]
 
 
 def read_variants(
     dir: Path, desired_arrays: list[str] | None = None
-) -> VariantsIterator:
-    res = _load_chunks_and_metadata(dir, desired_arrays=desired_arrays)
-    return VariantsIterator(res["chunks"], samples=res["metadata"]["samples"])
+) -> Iterator[ArraysChunk]:
+    dir = DirWithMetadata(dir, create_dir=False)
+    source_metadata = dir.metadata
+    chunks_metadata = source_metadata["chunks_metadata"]
 
+    source_metadata = {
+        "samples": dir.metadata["samples"],
+        "total_num_variants": dir.metadata["total_num_rows"],
+    }
 
-if __name__ == "__main__":
-    vcf_path = "/home/jose/analyses/g2psol/source_data/core_collection/G2PSOLMerge.final.snp-around-indels-removed.gwas_reseq.snp_only.soft-dp-10-gq-20.hard-mean-dp-45-maxmiss-5-monomorph.maf-ge-0.05.biallelic_only.vcf.gz"
-    variants = read_vcf(vcf_path)
-    for chunk in variants:
-        print(chunk.num_rows)
-    1 / 0
-    from pathlib import Path
-
-    dir = Path(
-        "/home/jose/analyses/g2psol/variants/core_collection_snp_only.soft-dp-10-gq-20.hard-mean-dp-45-maxmiss-5-monomorph.maf-ge-0.05.biallelic_only"
+    return _read_chunks(
+        chunks_metadata=chunks_metadata,
+        source_metadata=source_metadata,
+        desired_arrays=desired_arrays,
     )
-    if dir.exists():
-        raise RuntimeError("No vuelvas a borrarlo")
-    array_set = ChunkedArraySet(dir=dir)
-    array_set.metadata = vcf_chunker.metadata
-    array_set.extend_chunks(vcf_chunker.get_chunks())
-    print("VCF read")
+
+
+def read_variants_metadata(dir: Path):
+    dir = DirWithMetadata(dir, create_dir=False)
+    return dir.metadata

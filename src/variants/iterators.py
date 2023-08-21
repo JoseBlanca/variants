@@ -42,73 +42,7 @@ class DirWithMetadata:
     metadata = property(_get_metadata, _set_metadata)
 
 
-class Array:
-    def __init__(self, array: ArrayType):
-        if isinstance(array, Array):
-            array = array.array
-        if not isinstance(array, (numpy.ndarray, pandas.DataFrame, pandas.Series)):
-            raise ValueError(f"Non supported type for array: {type(array)}")
-        self.array = array
-
-    @property
-    def num_rows(self):
-        array = self.array
-        return array.shape[0]
-
-    def get_rows(self, index):
-        array = self.array
-        if isinstance(array, numpy.ndarray):
-            array = array[index, ...]
-        elif isinstance(array, pandas.DataFrame):
-            array = array.iloc[index, :]
-        elif isinstance(array, pandas.Series):
-            array = array.iloc[index]
-        return Array(array)
-
-
-class Chunk:
-    @property
-    def num_rows(self):
-        raise NotImplementedError()
-
-
-def _as_array(array):
-    if isinstance(array, Array):
-        return array
-    else:
-        return Array(array)
-
-
-def _as_chunk(chunk):
-    if isinstance(chunk, Chunk):
-        return chunk
-    if isinstance(chunk, dict):
-        return ArraysChunk(chunk)
-    return ArrayChunk(chunk)
-
-
-class ArrayChunk(Chunk):
-    def __init__(self, cargo: Array | ArrayType):
-        self.cargo = _as_array(cargo)
-
-    @property
-    def num_rows(self):
-        return self.cargo.num_rows
-
-    def get_rows(self, index):
-        return ArrayChunk(self.cargo.get_rows(index))
-
-    def write(self, dir: Path):
-        dir = DirWithMetadata(dir, create_dir=True)
-        base_path = dir.path / "array"
-        metadata = {"type": "ArrayChunk"}
-        metadata["array_metadata"] = _write_array(self.cargo, base_path)
-        dir.metadata = metadata
-
-
 def _write_array(array, base_path):
-    array = array.array
-
     if not isinstance(array, (numpy.ndarray, pandas.DataFrame, pandas.Series)):
         raise ValueError(f"Don't know how to store type: {type(array)}")
 
@@ -130,16 +64,33 @@ def _write_array(array, base_path):
     return {"path": path, "save_method": save_method, "type_name": type_name}
 
 
-class ArraysChunk(Chunk):
-    def __init__(self, cargo: dict[Array]):
-        if not cargo:
+def _get_array_num_rows(array: ArrayType):
+    return array.shape[0]
+
+
+def _get_array_rows(array, index):
+    if isinstance(array, numpy.ndarray):
+        array = array[index, ...]
+    elif isinstance(array, pandas.DataFrame):
+        array = array.iloc[index, :]
+    elif isinstance(array, pandas.Series):
+        array = array.iloc[index]
+    return array
+
+
+class ArraysChunk:
+    def __init__(self, arrays: dict[ArrayType], source_metadata: dict | None = None):
+        if not arrays:
             raise ValueError("At least one array should be given")
+
+        if source_metadata is None:
+            source_metadata = {}
+        self.source_metadata = source_metadata
 
         num_rows = None
         revised_cargo = {}
-        for id, array in cargo.items():
-            array = _as_array(array)
-            this_num_rows = array.num_rows
+        for id, array in arrays.items():
+            this_num_rows = _get_array_num_rows(array)
             if num_rows is None:
                 num_rows = this_num_rows
             else:
@@ -148,24 +99,17 @@ class ArraysChunk(Chunk):
             revised_cargo[id] = array
 
         self._num_rows = num_rows
-        self.cargo = revised_cargo
+        self.arrays = revised_cargo
 
     @property
     def num_rows(self):
         return self._num_rows
 
     def items(self):
-        return self.cargo.items()
+        return self.arrays.items()
 
     def __getitem__(self, key):
-        return self.cargo[key]
-
-    def get_rows(self, index):
-        result = {}
-        for id, array in self.items():
-            result[id] = array.get_rows(index)
-
-        return ArraysChunk(result)
+        return self.arrays[key]
 
     def write(self, chunk_dir: Path):
         dir = DirWithMetadata(dir=chunk_dir, create_dir=True)
@@ -179,79 +123,28 @@ class ArraysChunk(Chunk):
         metadata = {"arrays_metadata": arrays_metadata, "type": "ArraysChunk"}
         dir.metadata = metadata
 
+    def get_rows(self, index):
+        arrays = {
+            id: _get_array_rows(array, index) for id, array in self.arrays.items()
+        }
 
-class ArrayChunkIterator(Iterator[Chunk]):
-    def __init__(
-        self, chunks: Iterator[Chunk], expected_total_num_rows: int | None = None
-    ):
-        try:
-            chunks_rows_expected = chunks.expected_total_num_rows
-        except AttributeError:
-            chunks_rows_expected = None
-        if expected_total_num_rows and chunks_rows_expected:
-            if expected_total_num_rows != chunks_rows_expected:
-                raise ValueError(
-                    f"The expected number of rows given is different than the suggested by the iterator: {expected_total_num_rows} vs {chunks_rows_expected}"
-                )
-        if expected_total_num_rows:
-            expected_rows = expected_total_num_rows
-        elif chunks_rows_expected:
-            expected_rows = chunks_rows_expected
-        else:
-            expected_rows = None
+        return self.__class__(arrays, source_metadata=self.source_metadata)
 
-        self._expected_rows = expected_rows
-        self._chunks = iter(chunks)
-        self._num_rows_processed = 0
 
-    @property
-    def num_rows_expected(self):
-        return self._expected_rows
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        try:
-            chunk = _as_chunk(next(self._chunks))
-            self._num_rows_processed += chunk.num_rows
-        except StopIteration:
-            if (
-                self._expected_rows is not None
-                and self._num_rows_processed != self._expected_rows
-            ):
-                raise ValueError(
-                    f"error, {self._expected_rows} were expected, but {self._num_rows_processed} have been processed"
-                )
-
-            raise StopIteration
+def _as_chunk(chunk):
+    if isinstance(chunk, ArraysChunk):
         return chunk
+    else:
+        return ArraysChunk(chunk)
 
 
-class VariantsIterator(ArrayChunkIterator):
-    def __init__(self, chunks: Iterator[Chunk], samples: list[str]):
-        super().__init__(
-            chunks, expected_total_num_rows=getattr(chunks, "num_rows_expected", None)
-        )
-        self._samples = samples
-
+class VariantsChunk(ArraysChunk):
     @property
-    def num_vars_expected(self):
-        return self.num_rows_expected
-
-    @property
-    def num_vars_processed(self):
-        return self._num_rows_processed
-
-    @property
-    def samples(self):
-        return self._samples
+    def samples(self) -> list[str]:
+        return self.source_metadata["samples"]
 
 
-def concatenate_arrays(arrays: list[Array]) -> Array:
-    if isinstance(arrays[0], Array):
-        arrays = [array.array for array in arrays]
-
+def _concatenate_arrays(arrays: list[ArrayType]) -> ArrayType:
     if isinstance(arrays[0], numpy.ndarray):
         array = numpy.vstack(arrays)
     elif isinstance(arrays[0], pandas.DataFrame):
@@ -260,12 +153,20 @@ def concatenate_arrays(arrays: list[Array]) -> Array:
         array = pandas.concat(arrays)
     else:
         raise ValueError("unknown type for array: " + str(type(arrays[0])))
-    return Array(array)
+    return array
 
 
-def _concatenate_arrays_chunks(chunks) -> ArraysChunk:
+def _concatenate_chunks(chunks: list[ArraysChunk]):
+    chunks = list(chunks)
+
+    if len(chunks) == 1:
+        return chunks[0]
+
     arrays_to_concatenate = defaultdict(list)
+    class_ = None
     for chunk in chunks:
+        if class_ is None:
+            class_ = chunk.__class__
         for array_id, array in chunk.items():
             arrays_to_concatenate[array_id].append(array)
 
@@ -275,29 +176,9 @@ def _concatenate_arrays_chunks(chunks) -> ArraysChunk:
 
     concatenated_chunk = {}
     for array_id, arrays in arrays_to_concatenate.items():
-        concatenated_chunk[array_id] = concatenate_arrays(arrays)
-    concatenated_chunk = ArraysChunk(concatenated_chunk)
+        concatenated_chunk[array_id] = _concatenate_arrays(arrays)
+    concatenated_chunk = class_(concatenated_chunk)
     return concatenated_chunk
-
-
-def _concatenate_chunks(chunks: list[Chunk]):
-    if len(chunks) == 1:
-        return chunks[0]
-
-    if isinstance(chunks[0], ArraysChunk):
-        return _concatenate_arrays_chunks(chunks)
-    else:
-        return concatenate_arrays([chunk.cargo for chunk in chunks])
-
-
-def accumulate_array_iter_in_mem(chunks: ArrayChunkIterator):
-    chunks = list(chunks)
-    array = _concatenate_chunks(chunks)
-    if isinstance(array, Array):
-        result = array.array
-    elif isinstance(array, ArraysChunk):
-        result = {array_id: array_.array for array_id, array_ in array.items()}
-    return result
 
 
 def _get_num_rows_in_chunk(buffered_chunk):
@@ -359,7 +240,9 @@ def _yield_chunks_from_buffer(buffered_chunk, desired_num_rows):
     return buffered_chunk, chunks_to_yield
 
 
-def resize_chunks(chunks: ArrayChunkIterator, desired_num_rows) -> ArrayChunkIterator:
+def resize_chunks(
+    chunks: Iterator[ArraysChunk], desired_num_rows
+) -> Iterator[ArraysChunk]:
     buffered_chunk = None
 
     while True:
@@ -382,20 +265,7 @@ def resize_chunks(chunks: ArrayChunkIterator, desired_num_rows) -> ArrayChunkIte
             break
 
 
-def take_n_variants(chunks: VariantsIterator, num_variants: int) -> VariantsIterator:
-    return VariantsIterator(
-        take_n_rows(chunks, num_rows=num_variants), samples=chunks.samples
-    )
-
-
-def take_n_rows(chunks: ArrayChunkIterator, num_rows: int) -> ArrayChunkIterator:
-    chunks = _take_n_rows_generate_chunks(chunks, num_rows)
-    chunks = ArrayChunkIterator(chunks, expected_total_num_rows=num_rows)
-
-    return chunks
-
-
-def _take_n_rows_generate_chunks(chunks, num_rows):
+def take_n_rows(chunks: Iterator[ArraysChunk], num_rows: int) -> Iterator[ArraysChunk]:
     rows_yielded = 0
     all_chunks_yielded = True
     for chunk in chunks:
@@ -411,8 +281,14 @@ def _take_n_rows_generate_chunks(chunks, num_rows):
         yield chunk.get_rows(slice(0, remaing_rows))
 
 
+def take_n_variants(
+    chunks: Iterator[ArraysChunk], num_variants: int
+) -> Iterator[ArraysChunk]:
+    return take_n_rows(chunks, num_rows=num_variants)
+
+
 def run_pipeline(
-    chunks: ArrayChunkIterator,
+    chunks: Iterator[ArraysChunk],
     map_functs: list[Callable] | None = None,
     reduce_funct: Callable | None = None,
     reduce_initialializer=None,
@@ -447,10 +323,6 @@ def run_pipeline(
         )
         result = reduced_result
     else:
-        result = ArrayChunkIterator(
-            chunks=processed_chunks, expected_total_num_rows=num_rows_expected
-        )
-        if is_variants:
-            result = VariantsIterator(result, samples=samples)
+        result = processed_chunks
 
     return result

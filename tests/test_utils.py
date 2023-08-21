@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy
 import pandas
 
-from variants.iterators import ArraysChunk, ArrayChunk
+from variants.iterators import ArraysChunk
 
 
 def create_normal_numpy_array(shape, loc=0.0, scale=1.0):
@@ -36,10 +36,6 @@ def check_chunks_are_equal(chunks1, chunks2):
     for arrays1, arrays2 in zip(chunks1, chunks2):
         if isinstance(chunks1, ArraysChunk) and isinstance(chunks2, ArraysChunk):
             check_arrays_in_two_dicts_are_equal(arrays1, arrays2)
-        elif isinstance(chunks1, ArrayChunk) and isinstance(chunks2, ArrayChunk):
-            check_arrays_in_two_dicts_are_equal(
-                ArraysChunk({0: arrays1.cargo}), ArraysChunk({0: arrays2.cargo})
-            )
         else:
             ValueError()
 
