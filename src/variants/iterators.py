@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 import json
 import functools
+import copy
 
 import numpy
 import pandas
@@ -138,10 +139,8 @@ def _as_chunk(chunk):
         return ArraysChunk(chunk)
 
 
-class VariantsChunk(ArraysChunk):
-    @property
-    def samples(self) -> list[str]:
-        return self.source_metadata["samples"]
+def get_samples_from_chunk(chunk):
+    return chunk.source_metadata["samples"]
 
 
 def _concatenate_arrays(arrays: list[ArrayType]) -> ArrayType:

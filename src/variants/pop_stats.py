@@ -5,7 +5,7 @@ import itertools
 import numpy
 import pandas
 
-from variants.iterators import run_pipeline, ArraysChunk
+from variants.iterators import run_pipeline, ArraysChunk, get_samples_from_chunk
 from variants.vars_io import GT_ARRAY_ID, MISSING_INT
 
 from enum import Enum
@@ -119,7 +119,7 @@ def calc_obs_het_stats_per_var(
     variants: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
-) -> Iterator[ArraysChunk]:
+):
     if hist_kwargs is None:
         hist_kwargs = {}
     hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
@@ -228,7 +228,8 @@ def _get_samples_from_variants(variants):
     except StopIteration:
         raise ValueError("No variants")
     variants = itertools.chain([chunk], variants)
-    return chunk.samples, variants
+    samples = get_samples_from_chunk(chunk)
+    return samples, variants
 
 
 def calc_major_allele_stats_per_var(

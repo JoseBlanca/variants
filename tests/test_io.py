@@ -4,7 +4,7 @@ import tempfile
 import os
 
 from variants import read_vcf, write_variants, read_variants, GT_ARRAY_ID
-from variants.vars_io import read_vcf_metadata, read_variants_metadata
+from variants.vars_io import read_vcf_metadata, VariantsDir
 from .test_utils import get_big_vcf
 
 VCF_SAMPLE = b"""##fileformat=VCFv4.0
@@ -70,15 +70,15 @@ def test_write_chunks():
         os.rmdir(str(dir))
         write_variants(str(dir), variants)
 
-        metadata = read_variants_metadata(str(dir))
-        assert metadata["samples"] == [
+        variants_dir = VariantsDir(str(dir))
+        assert variants_dir.samples == [
             "NA00001",
             "NA00002",
             "NA00003",
         ]
-        assert metadata["total_num_variants"] == 5
+        assert variants_dir.num_variants == 5
 
-        variants = read_variants(dir, desired_arrays=[GT_ARRAY_ID])
+        variants = variants_dir.iterate_over_variants(desired_arrays=[GT_ARRAY_ID])
         chunk = list(variants)[0]
         assert chunk.source_metadata["samples"] == ["NA00001", "NA00002", "NA00003"]
         assert list(chunk.arrays.keys()) == [GT_ARRAY_ID]

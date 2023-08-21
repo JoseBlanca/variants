@@ -1,4 +1,3 @@
-import pytest
 import numpy
 import pandas
 
@@ -7,6 +6,7 @@ from variants.iterators import (
     resize_chunks,
     take_n_variants,
     _concatenate_chunks,
+    get_samples_from_chunk,
 )
 from .test_utils import create_normal_numpy_array, get_big_vcf
 from variants import read_vcf
@@ -51,6 +51,6 @@ def test_take_n():
         variants = read_vcf(get_big_vcf(), num_variants_per_chunk=500)
         variants = take_n_variants(variants, num_variants)
         variants = list(variants)
-        assert len(variants[0].samples) == 598
+        assert len(get_samples_from_chunk(variants[0])) == 598
         assert len(variants) == len(len_chunks)
         assert [chunk.num_rows for chunk in variants] == len_chunks

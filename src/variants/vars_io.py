@@ -5,16 +5,13 @@ from io import BytesIO
 from pathlib import Path
 import copy
 
+
 import numpy
 import pandas
 import more_itertools
 import allel
 
-from variants.iterators import (
-    ArraysChunk,
-    VariantsChunk,
-    DirWithMetadata,
-)
+from variants.iterators import ArraysChunk, DirWithMetadata
 
 GT_ARRAY_ID = "gts"
 VARIANTS_ARRAY_ID = "variants"
@@ -89,7 +86,7 @@ def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk):
         orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
         orig_vcf = pandas.DataFrame({"vcf_line": orig_vcf})
 
-        variant_chunk = VariantsChunk(
+        variant_chunk = ArraysChunk(
             {
                 VARIANTS_ARRAY_ID: variants_dframe,
                 ALLELES_ARRAY_ID: alleles,
@@ -180,6 +177,37 @@ def write_chunks(
     dir.metadata = metadata
 
 
+class VariantsDir(DirWithMetadata):
+    @property
+    def samples(self):
+        return self.metadata["samples"]
+
+    @property
+    def num_variants(self):
+        return self.metadata["total_num_rows"]
+
+    @property
+    def num_samples(self):
+        return len(self.samples)
+
+    def iterate_over_variants(
+        self, desired_arrays: list[str] | None = None
+    ) -> Iterator[ArraysChunk]:
+        source_metadata = self.metadata
+        chunks_metadata = source_metadata["chunks_metadata"]
+
+        source_metadata = {
+            "samples": self.samples,
+            "total_num_variants": self.num_variants,
+        }
+
+        return _read_chunks(
+            chunks_metadata=chunks_metadata,
+            source_metadata=source_metadata,
+            desired_arrays=desired_arrays,
+        )
+
+
 def _load_array(path, array_type, file_format):
     path = Path(path)
     if array_type == "ndarray" and file_format == "npy":
@@ -219,42 +247,15 @@ def _read_chunks(
     for chunk_info in chunks_metadata:
         chunk_dir = DirWithMetadata(chunk_info["dir"], create_dir=False)
         chunk_metadata = chunk_dir.metadata
-        if chunk_metadata["type"] == "ArrayChunk":
-            if desired_arrays:
-                raise ValueError(
-                    f"Chunk only has one array, so no desired arrays can be asked: {desired_arrays}"
-                )
-            array_metadata = chunk_metadata["array_metadata"]
-            chunk = _load_array_chunk(array_metadata)
-        elif chunk_metadata["type"] == "ArraysChunk":
-            arrays_metadata = chunk_metadata["arrays_metadata"]
-            chunk = _load_arrays_chunk(
-                arrays_metadata,
-                desired_arrays,
-                source_metadata=copy.deepcopy(source_metadata),
-            )
+        arrays_metadata = chunk_metadata["arrays_metadata"]
+        chunk = _load_arrays_chunk(
+            arrays_metadata,
+            desired_arrays,
+            source_metadata=copy.deepcopy(source_metadata),
+        )
         yield chunk
 
 
-def read_variants(
-    dir: Path, desired_arrays: list[str] | None = None
-) -> Iterator[ArraysChunk]:
-    dir = DirWithMetadata(dir, create_dir=False)
-    source_metadata = dir.metadata
-    chunks_metadata = source_metadata["chunks_metadata"]
-
-    source_metadata = {
-        "samples": dir.metadata["samples"],
-        "total_num_variants": dir.metadata["total_num_rows"],
-    }
-
-    return _read_chunks(
-        chunks_metadata=chunks_metadata,
-        source_metadata=source_metadata,
-        desired_arrays=desired_arrays,
-    )
-
-
-def read_variants_metadata(dir: Path):
-    dir = DirWithMetadata(dir, create_dir=False)
-    return dir.metadata
+def read_variants(path, desired_arrays: list[str] | None = None):
+    dir = VariantsDir(path)
+    return dir.iterate_over_variants(desired_arrays=desired_arrays)

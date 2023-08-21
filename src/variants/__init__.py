@@ -6,5 +6,6 @@ from .vars_io import (
     VARIANTS_ARRAY_ID,
     ALLELES_ARRAY_ID,
     ORIG_VCF_ARRAY_ID,
+    VariantsDir,
 )
 from .pop_stats import calc_obs_het_stats_per_var, calc_major_allele_stats_per_var
