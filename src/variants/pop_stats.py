@@ -35,6 +35,13 @@ def _calc_gt_is_missing(gts, gt_is_missing=None):
     return allele_is_missing
 
 
+def _calc_missing_rate_per_var(gts, gt_is_missing=None):
+    gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+
+    missing_rate = gt_is_missing.sum(axis=1) / gt_is_missing.shape[1]
+    return missing_rate
+
+
 def _calc_gts_is_het(gts, gt_is_missing=None):
     gt_is_het = numpy.logical_not(
         numpy.all(gts == gts[:, :, 0][:, :, numpy.newaxis], axis=2)
@@ -42,6 +49,12 @@ def _calc_gts_is_het(gts, gt_is_missing=None):
     gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
     gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
     return gt_is_het
+
+
+def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
+    gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
+    obs_het_rate = gt_is_het.sum(axis=1) / gt_is_missing.shape[1]
+    return obs_het_rate
 
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):

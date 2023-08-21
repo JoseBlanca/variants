@@ -9,3 +9,4 @@ from .vars_io import (
     VariantsDir,
 )
 from .pop_stats import calc_obs_het_stats_per_var, calc_major_allele_stats_per_var
+from .filter import VariantFilterer

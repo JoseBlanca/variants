@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Callable
 from collections import defaultdict
 from pathlib import Path
@@ -79,6 +79,16 @@ def _get_array_rows(array, index):
     return array
 
 
+def _apply_mask(array, index):
+    if isinstance(array, numpy.ndarray):
+        array = array[index, ...]
+    elif isinstance(array, pandas.DataFrame):
+        array = array.loc[index, :]
+    elif isinstance(array, pandas.Series):
+        array = array.loc[index]
+    return array
+
+
 class ArraysChunk:
     def __init__(self, arrays: dict[ArrayType], source_metadata: dict | None = None):
         if not arrays:
@@ -129,6 +139,10 @@ class ArraysChunk:
             id: _get_array_rows(array, index) for id, array in self.arrays.items()
         }
 
+        return self.__class__(arrays, source_metadata=self.source_metadata)
+
+    def apply_mask(self, mask: Sequence[bool]):
+        arrays = {id: _apply_mask(array, mask) for id, array in self.arrays.items()}
         return self.__class__(arrays, source_metadata=self.source_metadata)
 
 
@@ -294,19 +308,6 @@ def run_pipeline(
 ):
     if map_functs is None:
         map_functs = []
-
-    all_mappers_return_same_num_lines = all(
-        [getattr(funct, "returns_same_num_lines", False) for funct in map_functs]
-    )
-    if not reduce_funct and all_mappers_return_same_num_lines:
-        num_rows_expected = getattr(chunks, "num_rows_expected", None)
-    else:
-        num_rows_expected = None
-    try:
-        samples = chunks.samples
-        is_variants = True
-    except AttributeError:
-        is_variants = False
 
     def funct(item):
         processed_item = item
