@@ -3,9 +3,10 @@ import itertools
 from typing import Any
 
 import numpy
+import pandas
 
-from variants.vars_io import GT_ARRAY_ID
-from variants.iterators import ArraysChunk, resize_chunks, run_pipeline
+from variants.vars_io import GT_ARRAY_ID, VARIANTS_ARRAY_ID
+from variants.iterators import ArraysChunk, resize_chunks, run_pipeline, GenomeLocation
 from variants.pop_stats import (
     _calc_gt_is_missing,
     _calc_missing_rate_per_var,
@@ -34,7 +35,23 @@ def _update_remove_mask(remove_mask, new_remove_mask, filtering_info, filter_nam
     return remove_mask
 
 
-def _flt_chunk(chunk, max_var_obs_het, max_missing_rate):
+def _check_vars_in_regions(chroms, poss, regions_to_keep):
+    in_any_region = None
+    for region in regions_to_keep:
+        region_start, region_end = region
+        in_this_region = numpy.logical_and(
+            chroms == region_start.chrom,
+            numpy.logical_and(poss >= region_start.pos, poss <= region_end.pos),
+        )
+        if in_any_region is None:
+            in_any_region = in_this_region
+        else:
+            in_any_region = numpy.logical_or(in_this_region, in_any_region)
+
+    return in_any_region
+
+
+def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, regions_to_keep):
     gts = chunk[GT_ARRAY_ID]
 
     remove_mask = numpy.zeros((chunk.num_rows), dtype=bool)
@@ -55,6 +72,17 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate):
         remove_mask = _update_remove_mask(
             remove_mask, this_remove_mask, filtering_info, "obs_het"
         )
+    if regions_to_keep:
+        variants_info = chunk[VARIANTS_ARRAY_ID]
+        chroms = variants_info["chrom"].values
+        poss = variants_info["pos"].values
+        in_any_region = _check_vars_in_regions(chroms, poss, regions_to_keep)
+        this_remove_mask = numpy.logical_not(in_any_region)
+        remove_mask = _update_remove_mask(
+            remove_mask, this_remove_mask, filtering_info, "desired_region"
+        )
+    if isinstance(remove_mask, pandas.core.arrays.boolean.BooleanArray):
+        remove_mask = remove_mask.to_numpy(dtype=bool)
 
     flt_chunk = chunk.apply_mask(numpy.logical_not(remove_mask))
 
@@ -62,9 +90,17 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate):
 
 
 class _ChunkFilterer:
-    def __init__(self, max_var_obs_het, max_missing_rate):
+    def __init__(self, max_var_obs_het, max_missing_rate, regions_to_keep):
         self.max_var_obs_het = max_var_obs_het
         self.max_missing_rate = max_missing_rate
+
+        if regions_to_keep:
+            regions_to_keep = [
+                (GenomeLocation(chrom, start), GenomeLocation(chrom, end))
+                for chrom, start, end in regions_to_keep
+            ]
+        self.regions_to_keep = regions_to_keep
+
         self.stats = None
 
     def __call__(self, chunk):
@@ -72,6 +108,7 @@ class _ChunkFilterer:
             chunk,
             max_var_obs_het=self.max_var_obs_het,
             max_missing_rate=self.max_missing_rate,
+            regions_to_keep=self.regions_to_keep,
         )
 
         if self.stats is None:
@@ -99,10 +136,12 @@ class VariantFilterer:
         max_var_obs_het: float = 1.0,
         max_missing_rate: float = 1.0,
         num_variants_per_result_chunk: int | None = None,
+        regions_to_keep: list[tuple[str, int, int]] | None = None,
     ):
         self._filter_chunk = _ChunkFilterer(
             max_var_obs_het=max_var_obs_het,
             max_missing_rate=max_missing_rate,
+            regions_to_keep=regions_to_keep,
         )
 
         self.num_variants_per_result_chunk = num_variants_per_result_chunk

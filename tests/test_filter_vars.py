@@ -19,3 +19,11 @@ def test_filter_vars():
         flt_vars = list(filterer(vars))
         assert expected_num_rows == [chunk.num_rows for chunk in flt_vars]
         assert filterer.stats["num_vars_removed_per_filter"] == remove_stats
+
+
+def test_filter_by_region():
+    vars = get_sample_variants()
+    filterer = VariantFilterer(regions_to_keep=[("20", 10000, 20000)])
+    flt_vars = list(filterer(vars))
+    flt_vars[0]["variants"]["pos"] == [14270, 17330]
+    assert filterer.stats["num_vars_removed_per_filter"] == {"desired_region": 3}
