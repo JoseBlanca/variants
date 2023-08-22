@@ -4,14 +4,99 @@ from collections import defaultdict
 from pathlib import Path
 import json
 import functools
-import copy
+import math
+
 
 import numpy
 import pandas
 
-
 ArrayType = tuple[numpy.ndarray, pandas.DataFrame, pandas.Series]
 ARRAY_FILE_EXTENSIONS = {"DataFrame": ".parquet", "ndarray": ".npy"}
+
+
+@functools.total_ordering
+class GenomeLocation:
+    __slots__ = ("chrom", "pos")
+
+    def __init__(self, chrom: str, pos: int | float):
+        self.chrom = chrom
+        self.pos = pos
+
+    def __str__(self):
+        return f"{self.chrom}:{self.pos}"
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.chrom, self.pos})"
+
+    def __gt__(self, other):
+        if self.chrom > other.chrom:
+            return True
+        if self.chrom == other.chrom and self.pos > other.pos:
+            return True
+        return False
+
+    def __eq__(self, other):
+        if self.chrom == other.chrom and self.pos == other.pos:
+            return True
+        return False
+
+    def to_dict(self):
+        pos = self.pos
+        if isinstance(pos, (int, numpy.int_)):
+            pos = int(pos)
+        elif isinstance(pos, float) and math.isinf(pos):
+            pos = "inf"
+        else:
+            raise ValueError(f"pos should be int or math.inf: {type(pos)}({pos})")
+
+        return {"chrom": self.chrom, "pos": pos}
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        if data["pos"] == "inf":
+            pos = math.inf
+        else:
+            pos = int(data["pos"])
+        return cls(chrom=str(data["chrom"]), pos=pos)
+
+
+def as_genome_location(location):
+    if isinstance(location, GenomeLocation):
+        return location
+    elif isinstance(location, (tuple, list)) and len(location) == 2:
+        return GenomeLocation(*location)
+    elif isinstance(location, dict):
+        return GenomeLocation.from_dict(location)
+    else:
+        raise ValueError(
+            "I don't know how to turn this object into a genome location:"
+            + str(location)
+        )
+
+
+def genome_regions_intersect(
+    region1: (GenomeLocation, GenomeLocation),
+    region2: (GenomeLocation, GenomeLocation),
+):
+    reg1_loc1, reg1_loc2 = region1
+    reg2_loc1, reg2_loc2 = region2
+
+    assert reg1_loc1.chrom == reg1_loc2.chrom
+    assert reg2_loc1.chrom == reg2_loc2.chrom
+
+    if reg1_loc1.chrom != reg2_loc1.chrom:
+        return False
+
+    # reg1 +++++
+    # reg2         -----
+    if reg1_loc2.pos < reg2_loc1.pos:
+        return False
+
+    # reg1         +++++
+    # reg2 -----
+    if reg1_loc1.pos > reg2_loc2.pos:
+        return False
+    return True
 
 
 class DirWithMetadata:
@@ -28,15 +113,38 @@ class DirWithMetadata:
     def _get_metadata_path(self):
         return self.path / "metadata.json"
 
+    @staticmethod
+    def _fix_non_jsonable_from_dict(metadata):
+        if "chunk_genome_spans" in metadata:
+            metadata["chunk_genome_spans"] = {
+                int(chunk_id): (
+                    GenomeLocation.from_dict(start),
+                    GenomeLocation.from_dict(end),
+                )
+                for chunk_id, (start, end) in metadata["chunk_genome_spans"].items()
+            }
+
     def _get_metadata(self):
         metadata_path = self._get_metadata_path()
         if not metadata_path.exists():
             metadata = {}
         else:
             metadata = json.load(metadata_path.open("rt"))
+
+        self._fix_non_jsonable_from_dict(metadata)
         return metadata
 
+    @staticmethod
+    def _fix_non_jsonable_to_dict(metadata):
+        if "chunk_genome_spans" in metadata:
+            metadata["chunk_genome_spans"] = {
+                int(chunk_id): (start.to_dict(), end.to_dict())
+                for chunk_id, (start, end) in metadata["chunk_genome_spans"].items()
+            }
+
     def _set_metadata(self, metadata):
+        self._fix_non_jsonable_to_dict(metadata)
+
         metadata_path = self._get_metadata_path()
         json.dump(metadata, metadata_path.open("wt"))
 

@@ -4,6 +4,7 @@ import itertools
 from io import BytesIO
 from pathlib import Path
 import copy
+import math
 
 
 import numpy
@@ -11,7 +12,13 @@ import pandas
 import more_itertools
 import allel
 
-from variants.iterators import ArraysChunk, DirWithMetadata
+from variants.iterators import (
+    ArraysChunk,
+    DirWithMetadata,
+    GenomeLocation,
+    as_genome_location,
+    genome_regions_intersect,
+)
 
 GT_ARRAY_ID = "gts"
 VARIANTS_ARRAY_ID = "variants"
@@ -165,15 +172,50 @@ def write_chunks(
     if additional_metadata:
         metadata.update(additional_metadata)
 
+    pos_are_defined_and_sorted = False
+    last_chrom = ""
+    last_pos = 0
     num_rows_processed = 0
+    chunk_spans = {}
     for idx, chunk in enumerate(chunks):
         id = idx
         chunk_dir = dir.path / f"dataset_chunk:{id:08}"
         chunk.write(chunk_dir)
+
+        if VARIANTS_ARRAY_ID in chunk.arrays:
+            variants_dframe = chunk.arrays[VARIANTS_ARRAY_ID]
+            cols = variants_dframe.columns
+            if "chrom" in cols and "pos" in cols:
+                pos_are_defined_and_sorted = True
+        if pos_are_defined_and_sorted:
+            variants_dframe = chunk.arrays[VARIANTS_ARRAY_ID]
+            chroms = variants_dframe["chrom"]
+            poss = variants_dframe["pos"]
+
+            prev_chroms = numpy.concatenate(([last_chrom], chroms.iloc[0:-1].values))
+            prev_poss = numpy.concatenate(([last_pos], poss.iloc[0:-1].values))
+            poss_are_lt_prev_poss = numpy.all(
+                numpy.logical_or(
+                    chroms > prev_chroms,
+                    numpy.logical_and(chroms == prev_chroms, poss >= prev_poss),
+                )
+            )
+            if not poss_are_lt_prev_poss:
+                pos_are_defined_and_sorted = False
+
+            first_chunk_loc = GenomeLocation(chroms.iloc[0], poss.iloc[0])
+            last_chunk_loc = GenomeLocation(chroms.iloc[-1], poss.iloc[-1])
+            chunk_spans[id] = (first_chunk_loc, last_chunk_loc)
+
+            last_chrom = chroms.iloc[-1]
+            last_pos = poss.iloc[-1]
+
         num_rows = chunk.num_rows
         num_rows_processed += num_rows
         chunks_metadata.append({"id": id, "dir": str(chunk_dir), "num_rows": num_rows})
     metadata["total_num_rows"] = num_rows_processed
+    if pos_are_defined_and_sorted:
+        metadata["chunk_genome_spans"] = chunk_spans
     dir.metadata = metadata
 
 
@@ -191,10 +233,26 @@ class VariantsDir(DirWithMetadata):
         return len(self.samples)
 
     def iterate_over_variants(
-        self, desired_arrays: list[str] | None = None
+        self,
+        desired_arrays: list[str] | None = None,
+        get_only_chunks_intersecting_regions: list[(GenomeLocation, GenomeLocation)]
+        | None = None,
+        sorted_chroms: list[str] | None = None,
     ) -> Iterator[ArraysChunk]:
+        if get_only_chunks_intersecting_regions is not None:
+            get_only_chunks_intersecting_regions = [
+                (as_genome_location(region[0]), as_genome_location(region[1]))
+                for region in get_only_chunks_intersecting_regions
+            ]
+
+            if sorted_chroms is None:
+                raise ValueError(
+                    "If you want to only read chunks for certain regions you have to supply the list of sorted chroms "
+                )
+
         source_metadata = self.metadata
         chunks_metadata = source_metadata["chunks_metadata"]
+        chunk_genome_spans = source_metadata.get("chunk_genome_spans")
 
         source_metadata = {
             "samples": self.samples,
@@ -205,6 +263,9 @@ class VariantsDir(DirWithMetadata):
             chunks_metadata=chunks_metadata,
             source_metadata=source_metadata,
             desired_arrays=desired_arrays,
+            get_only_chunks_intersecting_regions=get_only_chunks_intersecting_regions,
+            chunk_genome_spans=chunk_genome_spans,
+            sorted_chroms=sorted_chroms,
         )
 
 
@@ -243,8 +304,52 @@ def _read_chunks(
     chunks_metadata,
     source_metadata,
     desired_arrays: list[str] | None = None,
+    get_only_chunks_intersecting_regions=None,
+    chunk_genome_spans=None,
+    sorted_chroms=None,
 ):
+    filter_by_region = bool(get_only_chunks_intersecting_regions)
+
     for chunk_info in chunks_metadata:
+        if filter_by_region:
+            chunk_span_start, chunk_span_end = chunk_genome_spans[chunk_info["id"]]
+            chunk_regions = []
+            if chunk_span_start.chrom == chunk_span_end.chrom:
+                chunk_regions.append((chunk_span_start, chunk_span_end))
+            else:
+                chunk_regions.append(
+                    (chunk_span_start, GenomeLocation(chunk_span_start.chrom, math.inf))
+                )
+                chunk_regions.append(
+                    (GenomeLocation(chunk_span_end.chrom, 0), chunk_span_end)
+                )
+                chrom0_index = sorted_chroms.index(chunk_span_start.chrom)
+                chrom1_index = sorted_chroms.index(chunk_span_end.chrom)
+                for intermediate_chrom in sorted_chroms[
+                    chrom0_index + 1 : chrom1_index
+                ]:
+                    chunk_regions.append(
+                        (
+                            GenomeLocation(intermediate_chrom, 0),
+                            GenomeLocation(intermediate_chrom, math.inf),
+                        )
+                    )
+
+            yield_chunk = False
+            for chunk_region in chunk_regions:
+                assert chunk_region[0].chrom == chunk_region[1].chrom
+                if any(
+                    genome_regions_intersect(region, chunk_region)
+                    for region in get_only_chunks_intersecting_regions
+                ):
+                    yield_chunk = True
+                    break
+        else:
+            yield_chunk = True
+
+        if not yield_chunk:
+            continue
+
         chunk_dir = DirWithMetadata(chunk_info["dir"], create_dir=False)
         chunk_metadata = chunk_dir.metadata
         arrays_metadata = chunk_metadata["arrays_metadata"]
