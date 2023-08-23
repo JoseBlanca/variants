@@ -1,6 +1,5 @@
 from collections.abc import Iterator
 import itertools
-from typing import Any
 
 import numpy
 import pandas

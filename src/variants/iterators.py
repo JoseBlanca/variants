@@ -74,29 +74,44 @@ def as_genome_location(location):
         )
 
 
-def genome_regions_intersect(
-    region1: (GenomeLocation, GenomeLocation),
-    region2: (GenomeLocation, GenomeLocation),
-):
-    reg1_loc1, reg1_loc2 = region1
-    reg2_loc1, reg2_loc2 = region2
+class GenomicRegion:
+    def __init__(self, chrom: str, start: int, end: int | float):
+        self.chrom = str(chrom)
+        self.start = int(start)
 
-    assert reg1_loc1.chrom == reg1_loc2.chrom
-    assert reg2_loc1.chrom == reg2_loc2.chrom
+        if isinstance(end, float) and math.isinf(end):
+            pass
+        else:
+            end = int(end)
+        self.end = end
 
-    if reg1_loc1.chrom != reg2_loc1.chrom:
-        return False
+    def intersects(self, region2):
+        region1 = self
 
-    # reg1 +++++
-    # reg2         -----
-    if reg1_loc2.pos < reg2_loc1.pos:
-        return False
+        if region1.chrom != region2.chrom:
+            return False
 
-    # reg1         +++++
-    # reg2 -----
-    if reg1_loc1.pos > reg2_loc2.pos:
-        return False
-    return True
+        # reg1 +++++
+        # reg2         -----
+        if region1.end < region2.start:
+            return False
+
+        # reg1         +++++
+        # reg2 -----
+        if region1.start > region2.end:
+            return False
+        return True
+
+
+def as_genomic_region(region):
+    if isinstance(region, GenomicRegion):
+        return region
+    elif isinstance(region, (tuple, list)) and len(region) == 3:
+        return GenomicRegion(chrom=region[0], start=region[1], end=region[2])
+    else:
+        raise ValueError(
+            "I don't know how to turn this object into a genomic region:" + str(region)
+        )
 
 
 class DirWithMetadata:

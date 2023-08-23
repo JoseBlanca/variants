@@ -57,8 +57,8 @@ def test_desired_regions():
     variants = read_vcf(get_big_vcf())
 
     rois = [
-        (("SL4.0ch03", 59236000), ("SL4.0ch03", 59236730)),
-        (("SL4.0ch11", 1), ("SL4.0ch11", 2)),
+        (("SL4.0ch03", 59236000, 59236730)),
+        (("SL4.0ch11", 1, 2)),
     ]
     sorted_chroms = [f"SL4.0ch{idx:0{2}}" for idx in range(1, 13)]
     with tempfile.TemporaryDirectory() as dir:

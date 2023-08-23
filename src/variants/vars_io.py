@@ -16,8 +16,8 @@ from variants.iterators import (
     ArraysChunk,
     DirWithMetadata,
     GenomeLocation,
-    as_genome_location,
-    genome_regions_intersect,
+    as_genomic_region,
+    GenomicRegion,
 )
 
 GT_ARRAY_ID = "gts"
@@ -241,7 +241,7 @@ class VariantsDir(DirWithMetadata):
     ) -> Iterator[ArraysChunk]:
         if get_only_chunks_intersecting_regions is not None:
             get_only_chunks_intersecting_regions = [
-                (as_genome_location(region[0]), as_genome_location(region[1]))
+                as_genomic_region(region)
                 for region in get_only_chunks_intersecting_regions
             ]
 
@@ -315,31 +315,31 @@ def _read_chunks(
             chunk_span_start, chunk_span_end = chunk_genome_spans[chunk_info["id"]]
             chunk_regions = []
             if chunk_span_start.chrom == chunk_span_end.chrom:
-                chunk_regions.append((chunk_span_start, chunk_span_end))
+                chunk_regions.append(
+                    GenomicRegion(
+                        chunk_span_start.chrom, chunk_span_start.pos, chunk_span_end.pos
+                    )
+                )
             else:
                 chunk_regions.append(
-                    (chunk_span_start, GenomeLocation(chunk_span_start.chrom, math.inf))
+                    GenomicRegion(
+                        chunk_span_start.chrom, chunk_span_start.pos, math.inf
+                    )
                 )
                 chunk_regions.append(
-                    (GenomeLocation(chunk_span_end.chrom, 0), chunk_span_end)
+                    GenomicRegion(chunk_span_end.chrom, 0, chunk_span_end.pos)
                 )
                 chrom0_index = sorted_chroms.index(chunk_span_start.chrom)
                 chrom1_index = sorted_chroms.index(chunk_span_end.chrom)
                 for intermediate_chrom in sorted_chroms[
                     chrom0_index + 1 : chrom1_index
                 ]:
-                    chunk_regions.append(
-                        (
-                            GenomeLocation(intermediate_chrom, 0),
-                            GenomeLocation(intermediate_chrom, math.inf),
-                        )
-                    )
+                    chunk_regions.append(GenomicRegion(intermediate_chrom, 0, math.inf))
 
             yield_chunk = False
             for chunk_region in chunk_regions:
-                assert chunk_region[0].chrom == chunk_region[1].chrom
                 if any(
-                    genome_regions_intersect(region, chunk_region)
+                    region.intersects(chunk_region)
                     for region in get_only_chunks_intersecting_regions
                 ):
                     yield_chunk = True
