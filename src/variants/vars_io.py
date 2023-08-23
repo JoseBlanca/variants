@@ -39,7 +39,13 @@ POS_FIELD = {
     "pandas_dtype": pandas.Int64Dtype(),
 }
 
-VARIANT_FIELDS = [CHROM_FIELD, POS_FIELD]
+QUAL_FIELD = {
+    "scikit-allel_path": "variants/QUAL",
+    "dframe_column": "qual",
+    "pandas_dtype": pandas.Float32Dtype(),
+}
+
+VARIANT_FIELDS = [CHROM_FIELD, POS_FIELD, QUAL_FIELD]
 
 
 def _get_fhand_rb(fhand):

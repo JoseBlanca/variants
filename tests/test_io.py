@@ -1,10 +1,11 @@
 import tempfile
 import os
 
+import numpy
+
 from variants import (
     read_vcf,
     write_variants,
-    read_variants,
     GT_ARRAY_ID,
     VARIANTS_ARRAY_ID,
 )
@@ -22,6 +23,11 @@ def test_vcf_reader():
     variants = read_vcf(fhand)
     chunk = next(variants)
     assert chunk.num_rows == 5
+    assert numpy.all(
+        numpy.isclose(
+            chunk[VARIANTS_ARRAY_ID]["qual"].astype(float), [29, 3, 67, 47, 50]
+        )
+    )
 
     assert len(read_vcf_metadata(get_big_vcf())["samples"]) == 598
 
