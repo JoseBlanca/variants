@@ -8,5 +8,9 @@ from .vars_io import (
     ORIG_VCF_ARRAY_ID,
     VariantsDir,
 )
-from .pop_stats import calc_obs_het_stats_per_var, calc_major_allele_stats_per_var
+from .pop_stats import (
+    calc_obs_het_stats_per_var,
+    calc_major_allele_stats_per_var,
+    calc_qual_stats_per_var,
+)
 from .filter import VariantFilterer

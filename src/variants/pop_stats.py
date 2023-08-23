@@ -6,7 +6,7 @@ import numpy
 import pandas
 
 from variants.iterators import run_pipeline, ArraysChunk, get_samples_from_chunk
-from variants.vars_io import GT_ARRAY_ID, MISSING_INT
+from variants.vars_io import GT_ARRAY_ID, MISSING_INT, VARIANTS_ARRAY_ID
 
 from enum import Enum
 
@@ -128,7 +128,7 @@ def _collect_stats_from_pop_dframes(
     return accumulated_result
 
 
-def calc_obs_het_stats_per_var(
+def calc_obs_het_stats_per_var_old(
     variants: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
@@ -158,6 +158,7 @@ def calc_obs_het_stats_per_var(
         "mean": mean,
         "hist_bin_edges": hist_bins_edges,
         "hist_counts": accumulated_result["hist_counts"],
+        "num_vars": accumulated_result["total_num_rows"],
     }
 
 
@@ -280,3 +281,88 @@ def calc_major_allele_stats_per_var(
         "hist_bin_edges": hist_bins_edges,
         "hist_counts": accumulated_result["hist_counts"],
     }
+
+
+def calc_qual_per_var_for_chunk(chunk):
+    quals = pandas.DataFrame({0: chunk.arrays[VARIANTS_ARRAY_ID]["qual"]})
+    return {"quals": quals}
+
+
+def _calc_stats_per_var(
+    variants: Iterator[ArraysChunk],
+    calc_stats_for_chunk,
+    get_stats_for_chunk_result,
+    pops,
+    hist_kwargs=None,
+) -> Iterator[ArraysChunk]:
+    if hist_kwargs is None:
+        hist_kwargs = {}
+    hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs["range"])
+
+    samples, variants = _get_samples_from_variants(variants)
+
+    pops = _calc_pops_idxs(pops, samples)
+
+    calc_stats_for_chunk = calc_qual_per_var_for_chunk
+    get_stats_for_chunk_result = lambda x: x["quals"]
+
+    collect_stats_from_pop_dframes = partial(
+        _collect_stats_from_pop_dframes, hist_bins_edges=hist_bins_edges
+    )
+
+    accumulated_result = run_pipeline(
+        variants,
+        map_functs=[
+            calc_stats_for_chunk,
+            get_stats_for_chunk_result,
+        ],
+        reduce_funct=collect_stats_from_pop_dframes,
+        reduce_initialializer=None,
+    )
+
+    mean = accumulated_result["sum_per_pop"] / accumulated_result["total_num_rows"]
+    return {
+        "mean": mean,
+        "hist_bin_edges": hist_bins_edges,
+        "hist_counts": accumulated_result["hist_counts"],
+    }
+
+
+def calc_qual_stats_per_var(
+    variants: Iterator[ArraysChunk],
+    hist_kwargs=None,
+) -> Iterator[ArraysChunk]:
+    if hist_kwargs is None:
+        raise ValueError(
+            "hist_kwargs should be a dict and at least has to provide the range"
+        )
+    if "range" not in hist_kwargs:
+        raise ValueError("You should provide a range for the histogram in hist_kwargs")
+
+    return _calc_stats_per_var(
+        variants=variants,
+        calc_stats_for_chunk=calc_qual_per_var_for_chunk,
+        get_stats_for_chunk_result=lambda x: x["quals"],
+        pops=None,
+        hist_kwargs=hist_kwargs,
+    )
+
+
+def calc_obs_het_stats_per_var(
+    variants: Iterator[ArraysChunk],
+    pops: list[str] | None = None,
+    hist_kwargs=None,
+):
+    if hist_kwargs is None:
+        hist_kwargs = {"range": (0, 1)}
+
+    samples, variants = _get_samples_from_variants(variants)
+    pops = _calc_pops_idxs(pops, samples)
+
+    return _calc_stats_per_var(
+        variants=variants,
+        calc_stats_for_chunk=partial(_calc_obs_het_per_var_for_chunk, pops=pops),
+        get_stats_for_chunk_result=lambda x: x["obs_het_per_var"],
+        pops=pops,
+        hist_kwargs=hist_kwargs,
+    )
