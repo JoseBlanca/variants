@@ -129,40 +129,6 @@ def _collect_stats_from_pop_dframes(
     return accumulated_result
 
 
-def calc_obs_het_stats_per_var_old(
-    variants: Iterator[ArraysChunk],
-    pops: list[str] | None = None,
-    hist_kwargs=None,
-):
-    if hist_kwargs is None:
-        hist_kwargs = {}
-    hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
-
-    samples, variants = _get_samples_from_variants(variants)
-    pops = _calc_pops_idxs(pops, samples)
-
-    calc_obs_het_per_var_for_chunk = partial(_calc_obs_het_per_var_for_chunk, pops=pops)
-
-    collect_stats_from_pop_dframes = partial(
-        _collect_stats_from_pop_dframes, hist_bins_edges=hist_bins_edges
-    )
-
-    accumulated_result = run_pipeline(
-        variants,
-        map_functs=[calc_obs_het_per_var_for_chunk, lambda x: x["obs_het_per_var"]],
-        reduce_funct=collect_stats_from_pop_dframes,
-        reduce_initialializer=None,
-    )
-
-    mean = accumulated_result["sum_per_pop"] / accumulated_result["total_num_rows"]
-    return {
-        "mean": mean,
-        "hist_bin_edges": hist_bins_edges,
-        "hist_counts": accumulated_result["hist_counts"],
-        "num_vars": accumulated_result["total_num_rows"],
-    }
-
-
 def _get_different_alleles(vars):
     def accumulate_alleles(accumulated_alleles, new_alleles):
         accumulated_alleles.update(new_alleles)
