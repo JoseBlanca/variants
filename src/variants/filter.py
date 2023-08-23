@@ -129,6 +129,15 @@ class _ChunkFilterer:
         return flt_chunk_res["chunk"]
 
 
+def _add_samples_to_source_metadata(chunk, samples):
+    source_metadata = chunk.source_metadata
+    if source_metadata is None:
+        source_metadata = {}
+    source_metadata["samples"] = samples
+    chunk.source_metadata = source_metadata
+    return chunk
+
+
 class VariantFilterer:
     def __init__(
         self,
@@ -154,6 +163,7 @@ class VariantFilterer:
             except StopIteration:
                 raise ValueError("No variants to filter")
             num_variants_per_result_chunk = chunk.num_rows
+            samples = chunk.source_metadata["samples"]
 
         flt_variants = run_pipeline(
             variants,
@@ -163,7 +173,13 @@ class VariantFilterer:
             flt_variants, num_variants_per_result_chunk
         )
 
-        return uniform_flt_variants
+        # resize chunks removes the source_metadata
+        vars_with_samples = (
+            _add_samples_to_source_metadata(chunk, samples)
+            for chunk in uniform_flt_variants
+        )
+
+        return vars_with_samples
 
     @property
     def stats(self):
