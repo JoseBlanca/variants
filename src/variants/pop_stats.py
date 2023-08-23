@@ -59,6 +59,7 @@ def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):
     gts = chunk[GT_ARRAY_ID]
+
     gt_is_missing = _calc_gt_is_missing(gts)
     gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
     gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
@@ -250,37 +251,20 @@ def calc_major_allele_stats_per_var(
     variants: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
-) -> Iterator[ArraysChunk]:
+):
     if hist_kwargs is None:
         hist_kwargs = {}
-    hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs.get("range", (0, 1)))
+    hist_kwargs["range"] = hist_kwargs.get("range", (0, 1))
 
     samples, variants = _get_samples_from_variants(variants)
-
     pops = _calc_pops_idxs(pops, samples)
 
-    calc_maf_per_var_for_chunk = partial(_calc_maf_per_var_for_chunk, pops=pops)
-
-    collect_stats_from_pop_dframes = partial(
-        _collect_stats_from_pop_dframes, hist_bins_edges=hist_bins_edges
+    return _calc_stats_per_var(
+        variants=variants,
+        calc_stats_for_chunk=partial(_calc_maf_per_var_for_chunk, pops=pops),
+        get_stats_for_chunk_result=lambda x: x["major_allele_freqs_per_var"],
+        hist_kwargs=hist_kwargs,
     )
-
-    accumulated_result = run_pipeline(
-        variants,
-        map_functs=[
-            calc_maf_per_var_for_chunk,
-            lambda x: x["major_allele_freqs_per_var"],
-        ],
-        reduce_funct=collect_stats_from_pop_dframes,
-        reduce_initialializer=None,
-    )
-
-    mean = accumulated_result["sum_per_pop"] / accumulated_result["total_num_rows"]
-    return {
-        "mean": mean,
-        "hist_bin_edges": hist_bins_edges,
-        "hist_counts": accumulated_result["hist_counts"],
-    }
 
 
 def calc_qual_per_var_for_chunk(chunk):
@@ -292,19 +276,11 @@ def _calc_stats_per_var(
     variants: Iterator[ArraysChunk],
     calc_stats_for_chunk,
     get_stats_for_chunk_result,
-    pops,
     hist_kwargs=None,
 ) -> Iterator[ArraysChunk]:
     if hist_kwargs is None:
         hist_kwargs = {}
     hist_bins_edges = _prepare_bins(hist_kwargs, range=hist_kwargs["range"])
-
-    samples, variants = _get_samples_from_variants(variants)
-
-    pops = _calc_pops_idxs(pops, samples)
-
-    calc_stats_for_chunk = calc_qual_per_var_for_chunk
-    get_stats_for_chunk_result = lambda x: x["quals"]
 
     collect_stats_from_pop_dframes = partial(
         _collect_stats_from_pop_dframes, hist_bins_edges=hist_bins_edges
@@ -343,7 +319,6 @@ def calc_qual_stats_per_var(
         variants=variants,
         calc_stats_for_chunk=calc_qual_per_var_for_chunk,
         get_stats_for_chunk_result=lambda x: x["quals"],
-        pops=None,
         hist_kwargs=hist_kwargs,
     )
 
@@ -354,7 +329,8 @@ def calc_obs_het_stats_per_var(
     hist_kwargs=None,
 ):
     if hist_kwargs is None:
-        hist_kwargs = {"range": (0, 1)}
+        hist_kwargs = {}
+    hist_kwargs["range"] = hist_kwargs.get("range", (0, 1))
 
     samples, variants = _get_samples_from_variants(variants)
     pops = _calc_pops_idxs(pops, samples)
@@ -363,6 +339,5 @@ def calc_obs_het_stats_per_var(
         variants=variants,
         calc_stats_for_chunk=partial(_calc_obs_het_per_var_for_chunk, pops=pops),
         get_stats_for_chunk_result=lambda x: x["obs_het_per_var"],
-        pops=pops,
         hist_kwargs=hist_kwargs,
     )
