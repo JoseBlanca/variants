@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import functools
 import math
+import copy
 
 
 import numpy
@@ -234,6 +235,16 @@ class ArraysChunk:
 
         self._num_rows = num_rows
         self.arrays = revised_cargo
+
+    def copy(self, desired_arrays: list[str] | None = None):
+        cls = self.__class__
+
+        if desired_arrays:
+            arrays = {id: array for id, array in self.items() if id in desired_arrays}
+        else:
+            arrays = {id: array for id, array in self.items()}
+
+        return cls(arrays=arrays, source_metadata=copy.deepcopy(self.source_metadata))
 
     @property
     def num_rows(self):

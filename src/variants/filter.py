@@ -145,6 +145,7 @@ class VariantFilterer:
         max_missing_rate: float = 1.0,
         num_variants_per_result_chunk: int | None = None,
         regions_to_keep: list[tuple[str, int, int]] | None = None,
+        desired_arrays: list[str] | None = None,
     ):
         self._filter_chunk = _ChunkFilterer(
             max_var_obs_het=max_var_obs_het,
@@ -153,6 +154,7 @@ class VariantFilterer:
         )
 
         self.num_variants_per_result_chunk = num_variants_per_result_chunk
+        self.desired_arrays = desired_arrays
 
     def __call__(self, variants: Iterator[ArraysChunk]) -> Iterator[ArraysChunk]:
         num_variants_per_result_chunk = self.num_variants_per_result_chunk
@@ -173,10 +175,17 @@ class VariantFilterer:
             flt_variants, num_variants_per_result_chunk
         )
 
+        if self.desired_arrays:
+            vars = (
+                chunk.copy(desired_arrays=self.desired_arrays)
+                for chunk in uniform_flt_variants
+            )
+        else:
+            vars = uniform_flt_variants
+
         # resize chunks removes the source_metadata
         vars_with_samples = (
-            _add_samples_to_source_metadata(chunk, samples)
-            for chunk in uniform_flt_variants
+            _add_samples_to_source_metadata(chunk, samples) for chunk in vars
         )
 
         return vars_with_samples
