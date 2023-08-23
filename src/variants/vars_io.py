@@ -312,6 +312,8 @@ def _read_chunks(
 
     for chunk_info in chunks_metadata:
         if filter_by_region:
+            if chunk_genome_spans is None:
+                raise RuntimeError("No metadata for chunk spans in the source variants")
             chunk_span_start, chunk_span_end = chunk_genome_spans[chunk_info["id"]]
             chunk_regions = []
             if chunk_span_start.chrom == chunk_span_end.chrom:
