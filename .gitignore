@@ -7,3 +7,4 @@ g2psol_tests.py
 variantsn.py
 src/variants/variants_old.py
 docs/
+tmp/
