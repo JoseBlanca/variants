@@ -6,10 +6,13 @@ import json
 import functools
 import math
 import copy
+import itertools
 
 
 import numpy
 import pandas
+
+from variants.globals import VARIANTS_ARRAY_ID
 
 ArrayType = tuple[numpy.ndarray, pandas.DataFrame, pandas.Series]
 ARRAY_FILE_EXTENSIONS = {"DataFrame": ".parquet", "ndarray": ".npy"}
@@ -478,3 +481,74 @@ class VariantsCounter:
     @property
     def num_vars(self):
         return self._num_vars
+
+
+def _get_first_chrom_from_chunk(chunk):
+    return chunk.arrays[VARIANTS_ARRAY_ID]["chrom"].iloc[0]
+
+
+def _split_chunks_to_have_only_one_chrom_per_chunk(vars):
+    current_chrom = None
+    current_chunk = None
+    while True:
+        if current_chunk is None:
+            try:
+                current_chunk = next(vars)
+            except StopIteration:
+                break
+
+        if current_chrom is None:
+            current_chrom = _get_first_chrom_from_chunk(current_chunk)
+
+        current_chunk_chroms = current_chunk.arrays[VARIANTS_ARRAY_ID]["chrom"]
+        to_yield = current_chunk_chroms == current_chrom
+        to_yield = to_yield.values
+        if isinstance(to_yield, pandas.core.arrays.arrow.array.ArrowExtensionArray):
+            to_yield = to_yield.to_numpy(dtype=bool)
+
+        if numpy.all(to_yield):
+            yield current_chunk
+            current_chunk = None
+            current_chrom = None
+            continue
+        elif numpy.any(to_yield):
+            yield current_chunk.get_rows(to_yield)
+            remaining_chunk = current_chunk.get_rows(numpy.logical_not(to_yield))
+            current_chunk = remaining_chunk
+            current_chrom = None
+        else:
+            raise RuntimeError(
+                "Fixme, it is not possible not having anything to yield at this point"
+            )
+
+
+def group_in_chroms(
+    vars: Iterator[ArraysChunk], do_chunk_resizing=True
+) -> Iterator[Iterator[ArraysChunk]]:
+    vars = _split_chunks_to_have_only_one_chrom_per_chunk(vars)
+
+    if do_chunk_resizing:
+        try:
+            chunk = next(vars)
+        except StopIteration:
+            return iter([])
+        vars = itertools.chain([chunk], vars)
+        num_rows_per_chunk = chunk.num_rows
+
+    keys_and_grouped_chunks = itertools.groupby(
+        vars, key=lambda chunk: _get_first_chrom_from_chunk(chunk)
+    )
+    grouped_chunks = (
+        resize_chunks(grouped_chunks, num_rows_per_chunk)
+        if do_chunk_resizing
+        else grouped_chunks
+        for _, grouped_chunks in keys_and_grouped_chunks
+    )
+
+    return grouped_chunks
+
+
+def group_in_genomic_windows(
+    vars: Iterator[ArraysChunk], win_len: int
+) -> Iterator[Iterator[ArraysChunk]]:
+    pass

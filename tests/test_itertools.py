@@ -8,9 +8,12 @@ from variants.iterators import (
     _concatenate_chunks,
     get_samples_from_chunk,
     VariantsCounter,
+    group_in_genomic_windows,
+    group_in_chroms,
 )
 from .test_utils import create_normal_numpy_array, get_big_vcf, get_sample_variants
 from variants import read_vcf
+from variants.globals import VARIANTS_ARRAY_ID
 
 
 def test_chunk():
@@ -63,3 +66,33 @@ def test_var_counter():
     vars = counter(vars)
     list(vars)
     assert counter.num_vars
+
+
+def test_window_grouper():
+    num_vars_to_take = 10000
+    vars = read_vcf(get_big_vcf(), num_variants_per_chunk=1000)
+    vars = take_n_variants(vars, num_vars_to_take)
+    grouped_vars = group_in_chroms(vars)
+
+    expected_chunk_lens = [
+        [1000, 1000, 1000, 520],
+        [1000, 1000, 1000, 1000, 356],
+        [1000, 1000, 124],
+    ]
+    expected_chroms = ["SL4.0ch01", "SL4.0ch02", "SL4.0ch03"]
+    total_num_vars = 0
+    for group_idx, group_of_chunks in enumerate(grouped_vars):
+        this_group_different_chroms = set()
+        this_group_num_vars_per_chunk = []
+        for chunk in group_of_chunks:
+            this_chunk_different_chroms = numpy.unique(
+                chunk.arrays[VARIANTS_ARRAY_ID]["chrom"]
+            )
+            assert len(set(this_chunk_different_chroms)) == 1
+            this_group_different_chroms.add(this_chunk_different_chroms[0])
+            this_group_num_vars_per_chunk.append(chunk.num_rows)
+            total_num_vars += chunk.num_rows
+        assert len(this_chunk_different_chroms) == 1
+        assert this_group_num_vars_per_chunk == expected_chunk_lens[group_idx]
+        assert this_chunk_different_chroms[0] == expected_chroms[group_idx]
+    assert total_num_vars == num_vars_to_take

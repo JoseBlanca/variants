@@ -6,7 +6,7 @@ import numpy
 import pandas
 
 from variants.iterators import run_pipeline, ArraysChunk, get_samples_from_chunk
-from variants.vars_io import GT_ARRAY_ID, MISSING_INT, VARIANTS_ARRAY_ID
+from variants.globals import GT_ARRAY_ID, MISSING_INT, VARIANTS_ARRAY_ID
 
 from enum import Enum
 

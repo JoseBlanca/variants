@@ -20,12 +20,13 @@ from variants.iterators import (
     GenomicRegion,
 )
 
-GT_ARRAY_ID = "gts"
-VARIANTS_ARRAY_ID = "variants"
-ALLELES_ARRAY_ID = "alleles"
-ORIG_VCF_ARRAY_ID = "orig_vcf"
-MISSING_INT = -1
-DEFAULT_NUM_VARIANTS_PER_CHUNK = 10000
+from variants.globals import (
+    GT_ARRAY_ID,
+    VARIANTS_ARRAY_ID,
+    ALLELES_ARRAY_ID,
+    ORIG_VCF_ARRAY_ID,
+    DEFAULT_NUM_VARIANTS_PER_CHUNK,
+)
 
 STRING_PANDAS_DTYPE = "string[pyarrow]"
 CHROM_FIELD = {
