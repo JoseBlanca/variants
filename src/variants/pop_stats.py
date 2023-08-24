@@ -187,6 +187,19 @@ def _count_alleles_per_var(gts, pops, calc_freqs, alleles=None, missing_gt=MISSI
     return {"counts": result, "alleles": alleles_in_chunk}
 
 
+def _calc_maf_per_var(gts, missing_gt=MISSING_INT):
+    allelic_freqs = _count_alleles_per_var(
+        gts,
+        pops={0: slice(None, None)},
+        alleles=None,
+        missing_gt=missing_gt,
+        calc_freqs=True,
+    )["counts"][0]["allelic_freqs"]
+
+    mafs = allelic_freqs.max(axis=1).values
+    return mafs
+
+
 def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
     res = _count_alleles_per_var(
         chunk[GT_ARRAY_ID],

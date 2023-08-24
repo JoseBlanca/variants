@@ -10,6 +10,7 @@ from variants.pop_stats import (
     _calc_gt_is_missing,
     _calc_missing_rate_per_var,
     _calc_obs_het_rate_per_var,
+    _calc_maf_per_var,
 )
 
 
@@ -50,7 +51,7 @@ def _check_vars_in_regions(chroms, poss, regions_to_keep):
     return in_any_region
 
 
-def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, regions_to_keep):
+def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_keep):
     gts = chunk[GT_ARRAY_ID]
 
     remove_mask = numpy.zeros((chunk.num_rows), dtype=bool)
@@ -80,8 +81,13 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, regions_to_keep):
         remove_mask = _update_remove_mask(
             remove_mask, this_remove_mask, filtering_info, "desired_region"
         )
-    if isinstance(remove_mask, pandas.core.arrays.boolean.BooleanArray):
-        remove_mask = remove_mask.to_numpy(dtype=bool)
+    if max_maf < 1:
+        gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
+        mafs = _calc_maf_per_var(gts)
+        this_remove_mask = mafs > max_maf
+        remove_mask = _update_remove_mask(
+            remove_mask, this_remove_mask, filtering_info, "maf"
+        )
 
     flt_chunk = chunk.apply_mask(numpy.logical_not(remove_mask))
 
@@ -89,9 +95,10 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, regions_to_keep):
 
 
 class _ChunkFilterer:
-    def __init__(self, max_var_obs_het, max_missing_rate, regions_to_keep):
+    def __init__(self, max_var_obs_het, max_missing_rate, max_maf, regions_to_keep):
         self.max_var_obs_het = max_var_obs_het
         self.max_missing_rate = max_missing_rate
+        self.max_maf = max_maf
 
         if regions_to_keep:
             regions_to_keep = [
@@ -107,6 +114,7 @@ class _ChunkFilterer:
             chunk,
             max_var_obs_het=self.max_var_obs_het,
             max_missing_rate=self.max_missing_rate,
+            max_maf=self.max_maf,
             regions_to_keep=self.regions_to_keep,
         )
 
@@ -143,6 +151,7 @@ class VariantFilterer:
         self,
         max_var_obs_het: float = 1.0,
         max_missing_rate: float = 1.0,
+        max_maf: float = 1.0,
         num_variants_per_result_chunk: int | None = None,
         regions_to_keep: list[tuple[str, int, int]] | None = None,
         desired_arrays: list[str] | None = None,
@@ -150,6 +159,7 @@ class VariantFilterer:
         self._filter_chunk = _ChunkFilterer(
             max_var_obs_het=max_var_obs_het,
             max_missing_rate=max_missing_rate,
+            max_maf=max_maf,
             regions_to_keep=regions_to_keep,
         )
 

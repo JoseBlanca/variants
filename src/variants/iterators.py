@@ -275,7 +275,11 @@ class ArraysChunk:
 
         return self.__class__(arrays, source_metadata=self.source_metadata)
 
-    def apply_mask(self, mask: Sequence[bool]):
+    def apply_mask(self, mask: Sequence[bool] | pandas.Series):
+        if isinstance(mask, pandas.Series):
+            mask = mask.values
+        if isinstance(mask, pandas.core.arrays.boolean.BooleanArray):
+            mask = mask.to_numpy(dtype=bool)
         arrays = {id: _apply_mask(array, mask) for id, array in self.arrays.items()}
         return self.__class__(arrays, source_metadata=self.source_metadata)
 

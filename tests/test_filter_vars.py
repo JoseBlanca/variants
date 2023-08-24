@@ -5,16 +5,25 @@ from variants import VariantFilterer
 
 def test_filter_vars():
     experiments = [
-        (1.0, 1.0, [5], {}),
-        (-0.01, 1.0, [], {"missing_rate": 5}),
-        (1.0, 0.5, [3], {"obs_het": 2}),
-        (0.5, 0.9, [5], {"missing_rate": 0, "obs_het": 0}),
+        (1.0, 1.0, 1.0, [5], {}),
+        (-0.01, 1.0, 1.0, [], {"missing_rate": 5}),
+        (1.0, 0.5, 1.0, [3], {"obs_het": 2}),
+        (0.5, 0.9, 1.0, [5], {"missing_rate": 0, "obs_het": 0}),
+        (1.0, 1.0, 0.9, [4], {"maf": 1}),
     ]
 
-    for max_missing_rate, max_obs_het, expected_num_rows, remove_stats in experiments:
+    for (
+        max_missing_rate,
+        max_obs_het,
+        max_maf,
+        expected_num_rows,
+        remove_stats,
+    ) in experiments:
         vars = get_sample_variants()
         filterer = VariantFilterer(
-            max_missing_rate=max_missing_rate, max_var_obs_het=max_obs_het
+            max_missing_rate=max_missing_rate,
+            max_var_obs_het=max_obs_het,
+            max_maf=max_maf,
         )
         flt_vars = list(filterer(vars))
         assert expected_num_rows == [chunk.num_rows for chunk in flt_vars]
