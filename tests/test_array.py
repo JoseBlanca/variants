@@ -7,8 +7,9 @@ from variants.iterators import (
     take_n_variants,
     _concatenate_chunks,
     get_samples_from_chunk,
+    VariantsCounter,
 )
-from .test_utils import create_normal_numpy_array, get_big_vcf
+from .test_utils import create_normal_numpy_array, get_big_vcf, get_sample_variants
 from variants import read_vcf
 
 
@@ -54,3 +55,11 @@ def test_take_n():
         assert len(get_samples_from_chunk(variants[0])) == 598
         assert len(variants) == len(len_chunks)
         assert [chunk.num_rows for chunk in variants] == len_chunks
+
+
+def test_var_counter():
+    vars = get_sample_variants()
+    counter = VariantsCounter()
+    vars = counter(vars)
+    list(vars)
+    assert counter.num_vars

@@ -464,3 +464,17 @@ def run_pipeline(
         result = processed_chunks
 
     return result
+
+
+class VariantsCounter:
+    def __init__(self):
+        self._num_vars = 0
+
+    def __call__(self, variations: Iterator[ArraysChunk]):
+        for chunk in variations:
+            self._num_vars += chunk.num_rows
+            yield chunk
+
+    @property
+    def num_vars(self):
+        return self._num_vars

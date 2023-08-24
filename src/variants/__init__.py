@@ -14,3 +14,4 @@ from .pop_stats import (
     calc_qual_stats_per_var,
 )
 from .filter import VariantFilterer
+from .iterators import VariantsCounter
