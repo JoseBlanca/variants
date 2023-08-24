@@ -58,6 +58,15 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_kee
     filtering_info = {"num_vars_removed_per_filter": {}}
 
     gt_is_missing = None
+    if regions_to_keep:
+        variants_info = chunk[VARIANTS_ARRAY_ID]
+        chroms = variants_info["chrom"].values
+        poss = variants_info["pos"].values
+        in_any_region = _check_vars_in_regions(chroms, poss, regions_to_keep)
+        this_remove_mask = numpy.logical_not(in_any_region)
+        remove_mask = _update_remove_mask(
+            remove_mask, this_remove_mask, filtering_info, "desired_region"
+        )
     if max_missing_rate < 1:
         gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
         missing_rate = _calc_missing_rate_per_var(gts, gt_is_missing=gt_is_missing)
@@ -71,15 +80,6 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_kee
         this_remove_mask = obs_het_rate > max_var_obs_het
         remove_mask = _update_remove_mask(
             remove_mask, this_remove_mask, filtering_info, "obs_het"
-        )
-    if regions_to_keep:
-        variants_info = chunk[VARIANTS_ARRAY_ID]
-        chroms = variants_info["chrom"].values
-        poss = variants_info["pos"].values
-        in_any_region = _check_vars_in_regions(chroms, poss, regions_to_keep)
-        this_remove_mask = numpy.logical_not(in_any_region)
-        remove_mask = _update_remove_mask(
-            remove_mask, this_remove_mask, filtering_info, "desired_region"
         )
     if max_maf < 1:
         gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
