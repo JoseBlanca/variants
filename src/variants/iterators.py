@@ -548,7 +548,76 @@ def group_in_chroms(
     return grouped_chunks
 
 
+def _get_first_pos_from_chunk(chunk):
+    return chunk.arrays[VARIANTS_ARRAY_ID]["pos"].iloc[0]
+
+
+def _group_vars_same_chrom_in_wins(vars, win_len):
+    current_pos = None
+    current_chunk = None
+    while True:
+        if current_chunk is None:
+            try:
+                current_chunk = next(vars)
+            except StopIteration:
+                break
+
+        if current_pos is None:
+            current_pos = _get_first_pos_from_chunk(current_chunk)
+
+        current_chunk_poss = current_chunk.arrays[VARIANTS_ARRAY_ID]["pos"]
+        to_yield = (current_chunk_poss - current_pos) < win_len
+        to_yield = to_yield.values
+        if isinstance(
+            to_yield,
+            (
+                pandas.core.arrays.arrow.array.ArrowExtensionArray,
+                pandas.core.arrays.boolean.BooleanArray,
+            ),
+        ):
+            to_yield = to_yield.to_numpy(dtype=bool)
+
+        if numpy.all(to_yield):
+            yield current_pos, current_chunk
+            current_chunk = None
+            continue
+        elif numpy.any(to_yield):
+            yield current_pos, current_chunk.get_rows(to_yield)
+            remaining_chunk = current_chunk.get_rows(numpy.logical_not(to_yield))
+            current_chunk = remaining_chunk
+            current_pos = None
+        else:
+            raise RuntimeError(
+                "Fixme, it is not possible not having anything to yield at this point"
+            )
+
+
+def _group_genomic_windows_all_chunks_same_chrom(vars, win_len, num_rows_per_chunk):
+    pos_and_grouped_chunks = _group_vars_same_chrom_in_wins(vars, win_len)
+
+    pos_and_grouped_chunkss = itertools.groupby(
+        pos_and_grouped_chunks, key=lambda item: item[0]
+    )
+
+    for pos, grouped_pos_and_chunks in pos_and_grouped_chunkss:
+        grouped_chunks = (chunk for pos, chunk in grouped_pos_and_chunks)
+        grouped_chunks = resize_chunks(grouped_chunks, num_rows_per_chunk)
+        yield grouped_chunks
+
+
 def group_in_genomic_windows(
     vars: Iterator[ArraysChunk], win_len: int
 ) -> Iterator[Iterator[ArraysChunk]]:
-    pass
+    try:
+        chunk = next(vars)
+    except StopIteration:
+        return iter([])
+    vars = itertools.chain([chunk], vars)
+    num_rows_per_chunk = chunk.num_rows
+
+    for chunks_for_chrom in group_in_chroms(vars, do_chunk_resizing=False):
+        grouped_chunks_for_chrom = _group_genomic_windows_all_chunks_same_chrom(
+            chunks_for_chrom, win_len, num_rows_per_chunk
+        )
+        for grouped_chunks in grouped_chunks_for_chrom:
+            yield grouped_chunks

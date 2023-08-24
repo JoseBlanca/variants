@@ -68,7 +68,7 @@ def test_var_counter():
     assert counter.num_vars
 
 
-def test_window_grouper():
+def test_chrom_grouper():
     num_vars_to_take = 10000
     vars = read_vcf(get_big_vcf(), num_variants_per_chunk=1000)
     vars = take_n_variants(vars, num_vars_to_take)
@@ -95,4 +95,54 @@ def test_window_grouper():
         assert len(this_chunk_different_chroms) == 1
         assert this_group_num_vars_per_chunk == expected_chunk_lens[group_idx]
         assert this_chunk_different_chroms[0] == expected_chroms[group_idx]
+    assert total_num_vars == num_vars_to_take
+
+
+def test_win_grouper():
+    vars = get_sample_variants()
+    grouped_vars = group_in_genomic_windows(vars, 20000)
+    expected_poss = [[14370, 17330], [1110696], [1230237, 1234567]]
+    for group_idx, group_of_chunks in enumerate(grouped_vars):
+        for chunk in group_of_chunks:
+            assert (
+                list(chunk.arrays[VARIANTS_ARRAY_ID]["pos"]) == expected_poss[group_idx]
+            )
+
+    num_vars_to_take = 10000
+    vars = read_vcf(get_big_vcf(), num_variants_per_chunk=1000)
+    vars = take_n_variants(vars, num_vars_to_take)
+    grouped_vars = group_in_genomic_windows(vars, 50000000)
+
+    expected_chunk_lens = [
+        [477],
+        [1000, 1000, 1000, 43],
+        [1000, 1000, 1000, 1000, 63],
+        [293],
+        [1000, 29],
+        [1000, 95],
+    ]
+    expected_chroms = [
+        "SL4.0ch01",
+        "SL4.0ch01",
+        "SL4.0ch02",
+        "SL4.0ch02",
+        "SL4.0ch03",
+        "SL4.0ch03",
+    ]
+    total_num_vars = 0
+    for group_idx, group_of_chunks in enumerate(grouped_vars):
+        this_group_different_chroms = set()
+        this_group_num_vars_per_chunk = []
+        for chunk in group_of_chunks:
+            this_chunk_different_chroms = numpy.unique(
+                chunk.arrays[VARIANTS_ARRAY_ID]["chrom"]
+            )
+            assert len(set(this_chunk_different_chroms)) == 1
+            this_group_different_chroms.add(this_chunk_different_chroms[0])
+            this_group_num_vars_per_chunk.append(chunk.num_rows)
+            total_num_vars += chunk.num_rows
+        assert len(this_chunk_different_chroms) == 1
+        assert this_chunk_different_chroms[0] == expected_chroms[group_idx]
+        assert this_group_num_vars_per_chunk == expected_chunk_lens[group_idx]
+
     assert total_num_vars == num_vars_to_take
