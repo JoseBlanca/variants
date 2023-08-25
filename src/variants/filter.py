@@ -52,7 +52,7 @@ def _check_vars_in_regions(chroms, poss, regions_to_keep):
 
 
 def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_keep):
-    gts = chunk[GT_ARRAY_ID]
+    gts = chunk[GT_ARRAY_ID].values
 
     remove_mask = numpy.zeros((chunk.num_rows), dtype=bool)
     filtering_info = {"num_vars_removed_per_filter": {}}
@@ -175,7 +175,7 @@ class VariantFilterer:
             except StopIteration:
                 raise ValueError("No variants to filter")
             num_variants_per_result_chunk = chunk.num_rows
-            samples = chunk.source_metadata["samples"]
+            samples = chunk.samples
 
         flt_variants = run_pipeline(
             variants,

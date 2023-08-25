@@ -7,9 +7,14 @@ import numpy
 import pandas
 
 from variants.regions import GenomeLocation
+from variants.globals import GT_ARRAY_ID
 
-ArrayType = tuple[numpy.ndarray, pandas.DataFrame, pandas.Series]
-ARRAY_FILE_EXTENSIONS = {"DataFrame": ".parquet", "ndarray": ".npy"}
+ArrayType = tuple[numpy.ndarray, pandas.DataFrame, pandas.Series, "Genotypes"]
+ARRAY_FILE_EXTENSIONS = {
+    "DataFrame": ".parquet",
+    "ndarray": ".npy",
+    "Genotypes": ".genotypes",
+}
 
 
 class DirWithMetadata:
@@ -65,7 +70,9 @@ class DirWithMetadata:
 
 
 def _write_array(array, base_path):
-    if not isinstance(array, (numpy.ndarray, pandas.DataFrame, pandas.Series)):
+    if not isinstance(
+        array, (numpy.ndarray, pandas.DataFrame, pandas.Series, Genotypes)
+    ):
         raise ValueError(f"Don't know how to store type: {type(array)}")
 
     type_name = type(array).__name__
@@ -80,6 +87,9 @@ def _write_array(array, base_path):
     elif isinstance(array, numpy.ndarray):
         numpy.save(path, array)
         save_method = "npy"
+    elif isinstance(array, Genotypes):
+        array.save(path)
+        save_method = "genotypes"
     else:
         raise ValueError(f"Unknown array type: {type(array)}")
 
@@ -91,12 +101,16 @@ def _get_array_num_rows(array: ArrayType):
 
 
 def _get_array_rows(array, index):
-    if isinstance(array, numpy.ndarray):
+    if isinstance(array, Genotypes):
+        array = array.get_rows(index)
+    elif isinstance(array, numpy.ndarray):
         array = array[index, ...]
     elif isinstance(array, pandas.DataFrame):
         array = array.iloc[index, :]
     elif isinstance(array, pandas.Series):
         array = array.iloc[index]
+    else:
+        raise ValueError(f"unknown array type: {type(array)}")
     return array
 
 
@@ -109,6 +123,11 @@ def _set_array_rows(array1, index, array2):
     elif isinstance(array1, pandas.Series):
         array1 = array1.copy()
         array1.iloc[index] = array2
+    elif isinstance(array1, Genotypes):
+        assert array1.samples == array2.samples
+        array1.values[index, ...] = array2.values
+    else:
+        raise ValueError(f"unknown array type: {type(array1)}")
     return array1
 
 
@@ -119,6 +138,10 @@ def _apply_mask(array, index):
         array = array.loc[index, :]
     elif isinstance(array, pandas.Series):
         array = array.loc[index]
+    elif isinstance(array, Genotypes):
+        array = array.get_rows(index)
+    else:
+        raise ValueError(f"unknown array type: {type(array)}")
     return array
 
 
@@ -201,8 +224,67 @@ class ArraysChunk:
         return self.__class__(arrays, source_metadata=self.source_metadata)
 
 
+class Variants(ArraysChunk):
+    @property
+    def samples(self):
+        return self.arrays[GT_ARRAY_ID].samples
+
+
 def _as_chunk(chunk):
     if isinstance(chunk, ArraysChunk):
         return chunk
     else:
         return ArraysChunk(chunk)
+
+
+def _build_genotypes_samples_path(path):
+    return Path(str(path) + ".samples.json")
+
+
+def _build_genotypes_gts_path(path):
+    return Path(str(path) + ".gts.npy")
+
+
+class Genotypes:
+    def __init__(self, genotypes: numpy.ndarray, samples=Sequence[str]):
+        assert genotypes.ndim == 3
+        samples = list(samples)
+        if genotypes.shape[1] != len(samples):
+            raise ValueError(
+                f"Number of samples in gts ({genotypes.shape[1]}) and number of given samples ({len(samples)}) do not match"
+            )
+        self._gts = genotypes
+        self._samples = samples
+
+    @property
+    def samples(self):
+        return self._samples
+
+    @property
+    def values(self):
+        return self._gts
+
+    @property
+    def shape(self):
+        return self._gts.shape
+
+    def get_rows(self, index):
+        gts = self._gts[index, ...]
+        return self.__class__(genotypes=gts, samples=self.samples)
+
+    def save(self, path):
+        numpy.save(_build_genotypes_gts_path(path), self._gts)
+        json_path = _build_genotypes_samples_path(path)
+        json.dump(self._samples, json_path.open("wt"))
+
+    @classmethod
+    def load(cls, path):
+        gts = numpy.load(_build_genotypes_gts_path(path))
+        samples = json.load(_build_genotypes_samples_path(path).open("rt"))
+        return cls(gts, samples)
+
+
+def concat_genotypes(genotypes: Sequence[Genotypes]):
+    gtss = [gts.values for gts in genotypes]
+    gts = numpy.vstack(gtss)
+    return Genotypes(genotypes=gts, samples=genotypes[0].samples)

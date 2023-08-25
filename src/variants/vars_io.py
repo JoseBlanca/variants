@@ -12,9 +12,7 @@ import pandas
 import more_itertools
 import allel
 
-from variants.iterators import ArraysChunk
-
-from variants.arrays_chunk import DirWithMetadata
+from variants.variants import DirWithMetadata, Genotypes, Variants, ArraysChunk
 from variants.regions import GenomeLocation, as_genomic_region, GenomicRegion
 from variants.globals import (
     GT_ARRAY_ID,
@@ -69,7 +67,7 @@ def _read_vcf_metadata(lines):
     return {"header_lines": header_lines, "samples": samples, "lines": lines}
 
 
-def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk):
+def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk, samples):
     header_lines = [line.encode() for line in source_metadata["header_lines"]]
     for lines_in_chunk in more_itertools.chunked(lines, num_variants_per_chunk):
         vcf_chunk = BytesIO(b"".join(header_lines + lines_in_chunk))
@@ -91,12 +89,12 @@ def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk):
         alt = allel_arrays["variants/ALT"]
         alleles = pandas.DataFrame(numpy.hstack([ref, alt]), dtype=STRING_PANDAS_DTYPE)
 
-        gts = allel_arrays["calldata/GT"]
+        gts = Genotypes(allel_arrays["calldata/GT"], samples=samples)
 
         orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
         orig_vcf = pandas.DataFrame({"vcf_line": orig_vcf})
 
-        variant_chunk = ArraysChunk(
+        variant_chunk = Variants(
             {
                 VARIANTS_ARRAY_ID: variants_dframe,
                 ALLELES_ARRAY_ID: alleles,
@@ -110,7 +108,7 @@ def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk):
 
 def read_vcf(
     fhand, num_variants_per_chunk=DEFAULT_NUM_VARIANTS_PER_CHUNK
-) -> Iterator[ArraysChunk]:
+) -> Iterator[Variants]:
     fhand = _get_fhand_rb(fhand)
 
     lines = gzip.open(fhand, "rb")
@@ -120,10 +118,12 @@ def read_vcf(
     except StopIteration:
         raise RuntimeError("Failed to get metadata from VCF")
 
-    source_metadata = {"header_lines": res["header_lines"], "samples": res["samples"]}
+    source_metadata = {"header_lines": res["header_lines"]}
     lines = res["lines"]
 
-    yield from _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk)
+    yield from _get_vcf_chunks(
+        lines, source_metadata, num_variants_per_chunk, samples=res["samples"]
+    )
 
 
 def read_vcf_metadata(fhand):
@@ -135,17 +135,13 @@ def read_vcf_metadata(fhand):
     return res
 
 
-def write_variants(dir: Path, vars_iter: Iterator[ArraysChunk]):
+def write_variants(dir: Path, vars_iter: Iterator[Variants]):
     try:
         chunk = next(vars_iter)
     except StopIteration:
         raise ValueError("No variants to write")
 
     source_metadata = chunk.source_metadata
-    try:
-        metadata = {"samples": source_metadata["samples"]}
-    except KeyError:
-        raise ValueError("No samples in source_metadata for these variant chunks")
 
     if "total_num_rows" in source_metadata:
         expected_num_rows = source_metadata["total_num_rows"]
@@ -155,7 +151,7 @@ def write_variants(dir: Path, vars_iter: Iterator[ArraysChunk]):
     variants = itertools.chain([chunk], vars_iter)
 
     # samples num_variants
-    write_chunks(dir, variants, additional_metadata=metadata)
+    write_chunks(dir, variants)
 
     dir = DirWithMetadata(dir, create_dir=False)
     metadata = dir.metadata
@@ -225,7 +221,13 @@ def write_chunks(
 class VariantsDir(DirWithMetadata):
     @property
     def samples(self):
-        return self.metadata["samples"]
+        vars_iter = self.iterate_over_variants()
+        try:
+            chunk = next(vars_iter)
+        except StopIteration:
+            raise RuntimeError(f"No variants in dir: {self.path}")
+
+        return chunk.samples
 
     @property
     def num_variants(self):
@@ -241,7 +243,7 @@ class VariantsDir(DirWithMetadata):
         get_only_chunks_intersecting_regions: list[(GenomeLocation, GenomeLocation)]
         | None = None,
         sorted_chroms: list[str] | None = None,
-    ) -> Iterator[ArraysChunk]:
+    ) -> Iterator[Variants]:
         if get_only_chunks_intersecting_regions is not None:
             get_only_chunks_intersecting_regions = [
                 as_genomic_region(region)
@@ -258,7 +260,6 @@ class VariantsDir(DirWithMetadata):
         chunk_genome_spans = source_metadata.get("chunk_genome_spans")
 
         source_metadata = {
-            "samples": self.samples,
             "total_num_variants": self.num_variants,
         }
 
@@ -280,6 +281,8 @@ def _load_array(path, array_type, file_format):
         array = pandas.read_parquet(path)
     elif array_type == "Series" and file_format == "parquet":
         array = pandas.read_parquet(path).squeeze()
+    elif array_type == "Genotypes" and file_format == "genotypes":
+        array = Genotypes.load(path)
     else:
         raise ValueError(
             f"Don't know how to load array of type {array_type} from file format {file_format}"
@@ -299,7 +302,7 @@ def _load_arrays_chunk(arrays_metadata, desired_arrays, source_metadata):
             file_format=array_metadata["save_method"],
         )
         arrays[id] = array
-    chunk = ArraysChunk(arrays, source_metadata)
+    chunk = Variants(arrays, source_metadata)
     return chunk
 
 

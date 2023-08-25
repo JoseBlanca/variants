@@ -55,7 +55,7 @@ def test_write_chunks():
 
         variants = variants_dir.iterate_over_variants(desired_arrays=[GT_ARRAY_ID])
         chunk = list(variants)[0]
-        assert chunk.source_metadata["samples"] == ["NA00001", "NA00002", "NA00003"]
+        assert chunk.samples == ["NA00001", "NA00002", "NA00003"]
         assert list(chunk.arrays.keys()) == [GT_ARRAY_ID]
 
 

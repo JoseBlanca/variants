@@ -58,7 +58,7 @@ def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
 
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):
-    gts = chunk[GT_ARRAY_ID]
+    gts = chunk[GT_ARRAY_ID].values
 
     gt_is_missing = _calc_gt_is_missing(gts)
     gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
@@ -136,7 +136,7 @@ def _get_different_alleles(vars):
 
     result = run_pipeline(
         vars,
-        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID])],
+        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID].values)],
         reduce_funct=accumulate_alleles,
         reduce_initialializer=set(),
     )
@@ -202,7 +202,7 @@ def _calc_maf_per_var(gts, missing_gt=MISSING_INT):
 
 def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
     res = _count_alleles_per_var(
-        chunk[GT_ARRAY_ID],
+        chunk[GT_ARRAY_ID].values,
         pops,
         alleles=None,
         missing_gt=missing_gt,

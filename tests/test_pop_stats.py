@@ -1,5 +1,6 @@
 import numpy
 
+from variants.variants import Variants, Genotypes
 from variants.pop_stats import (
     _calc_obs_het_per_var_for_chunk,
     calc_obs_het_stats_per_var,
@@ -8,7 +9,6 @@ from variants.pop_stats import (
     _calc_maf_per_var_for_chunk,
     calc_major_allele_stats_per_var,
 )
-from variants.iterators import ArraysChunk
 from variants.vars_io import GT_ARRAY_ID
 
 
@@ -21,9 +21,7 @@ def test_obs_het_stats():
             [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
         ]
     )
-    chunk = ArraysChunk(
-        {GT_ARRAY_ID: gts}, source_metadata={"samples": [0, 1, 2, 3, 4]}
-    )
+    chunk = Variants({GT_ARRAY_ID: Genotypes(gts, samples=[1, 2, 3, 4])})
 
     res = _calc_obs_het_per_var_for_chunk(chunk, pops={0: slice(None, None)})
     obs_het_per_var = res["obs_het_per_var"][0].values
@@ -45,7 +43,7 @@ def test_obs_het_per_var():
             [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
         ]
     )
-    chunk = ArraysChunk({GT_ARRAY_ID: gts}, source_metadata={"samples": [1, 2, 3, 4]})
+    chunk = Variants({GT_ARRAY_ID: Genotypes(gts, samples=[1, 2, 3, 4])})
     variants = iter([chunk])
     assert _get_different_alleles(variants) == [0, 1, 3]
 
@@ -88,7 +86,7 @@ def test_maf_stats():
             [[-1, -1], [-1, -1], [-1, -1], [-1, -1]],  # snp3
         ]
     )
-    chunk = ArraysChunk({GT_ARRAY_ID: gts}, source_metadata={"samples": [1, 2, 3, 4]})
+    chunk = Variants({GT_ARRAY_ID: Genotypes(gts, samples=[1, 2, 3, 4])})
     res = _calc_maf_per_var_for_chunk(chunk, pops={0: slice(None, None)})
     assert numpy.allclose(
         res["major_allele_freqs_per_var"][0].values,

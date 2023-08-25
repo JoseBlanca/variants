@@ -9,11 +9,11 @@ import numpy
 import pandas
 
 from variants.globals import VARIANTS_ARRAY_ID
-from variants.arrays_chunk import ArrayType, ArraysChunk
+from variants.variants import ArrayType, ArraysChunk, Genotypes, concat_genotypes
 
 
 def get_samples_from_chunk(chunk):
-    return chunk.source_metadata["samples"]
+    return chunk.samples
 
 
 def _concatenate_arrays(arrays: list[ArrayType]) -> ArrayType:
@@ -23,6 +23,8 @@ def _concatenate_arrays(arrays: list[ArrayType]) -> ArrayType:
         array = pandas.concat(arrays, axis=0)
     elif isinstance(arrays[0], pandas.Series):
         array = pandas.concat(arrays)
+    elif isinstance(arrays[0], Genotypes):
+        array = concat_genotypes(arrays)
     else:
         raise ValueError("unknown type for array: " + str(type(arrays[0])))
     return array
