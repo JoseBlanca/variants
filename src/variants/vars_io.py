@@ -135,9 +135,9 @@ def read_vcf_metadata(fhand):
     return res
 
 
-def write_variants(dir: Path, variants: Iterator[ArraysChunk]):
+def write_variants(dir: Path, vars_iter: Iterator[ArraysChunk]):
     try:
-        chunk = next(variants)
+        chunk = next(vars_iter)
     except StopIteration:
         raise ValueError("No variants to write")
 
@@ -152,7 +152,7 @@ def write_variants(dir: Path, variants: Iterator[ArraysChunk]):
     else:
         expected_num_rows = None
 
-    variants = itertools.chain([chunk], variants)
+    variants = itertools.chain([chunk], vars_iter)
 
     # samples num_variants
     write_chunks(dir, variants, additional_metadata=metadata)

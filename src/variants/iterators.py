@@ -154,9 +154,9 @@ def take_n_rows(chunks: Iterator[ArraysChunk], num_rows: int) -> Iterator[Arrays
 
 
 def take_n_variants(
-    chunks: Iterator[ArraysChunk], num_variants: int
+    vars_iter: Iterator[ArraysChunk], num_variants: int
 ) -> Iterator[ArraysChunk]:
-    return take_n_rows(chunks, num_rows=num_variants)
+    return take_n_rows(vars_iter, num_rows=num_variants)
 
 
 def run_pipeline(
@@ -191,8 +191,8 @@ class VariantsCounter:
     def __init__(self):
         self._num_vars = 0
 
-    def __call__(self, variations: Iterator[ArraysChunk]):
-        for chunk in variations:
+    def __call__(self, vars_iter: Iterator[ArraysChunk]):
+        for chunk in vars_iter:
             self._num_vars += chunk.num_rows
             yield chunk
 
@@ -241,9 +241,9 @@ def _split_chunks_to_have_only_one_chrom_per_chunk(vars):
 
 
 def group_in_chroms(
-    vars: Iterator[ArraysChunk], do_chunk_resizing=True
+    vars_iter: Iterator[ArraysChunk], do_chunk_resizing=True
 ) -> Iterator[Iterator[ArraysChunk]]:
-    vars = _split_chunks_to_have_only_one_chrom_per_chunk(vars)
+    vars = _split_chunks_to_have_only_one_chrom_per_chunk(vars_iter)
 
     if do_chunk_resizing:
         try:
@@ -324,13 +324,13 @@ def _group_genomic_windows_all_chunks_same_chrom(vars, win_len, num_rows_per_chu
 
 
 def group_in_genomic_windows(
-    vars: Iterator[ArraysChunk], win_len: int
+    vars_iter: Iterator[ArraysChunk], win_len: int
 ) -> Iterator[Iterator[ArraysChunk]]:
     try:
-        chunk = next(vars)
+        chunk = next(vars_iter)
     except StopIteration:
         return iter([])
-    vars = itertools.chain([chunk], vars)
+    vars = itertools.chain([chunk], vars_iter)
     num_rows_per_chunk = chunk.num_rows
 
     for chunks_for_chrom in group_in_chroms(vars, do_chunk_resizing=False):
@@ -389,14 +389,14 @@ def _choose_new_sample(chunk, starting_num_row, num_items_asked):
 
 
 def sample_n_vars(
-    vars: Iterator[ArraysChunk], num_vars: int, keep_order=False
+    vars_iter: Iterator[ArraysChunk], num_vars: int, keep_order=False
 ) -> ArraysChunk:
     # This function uses a variation of the  Reservoir L algorithm
 
     if keep_order:
         raise NotImplementedError()
 
-    reservoir, vars = _fill_reservoir(vars, num_vars)
+    reservoir, vars = _fill_reservoir(vars_iter, num_vars)
     current_num_row = reservoir.num_rows
     for chunk in vars:
         res = _choose_new_sample(chunk, current_num_row, num_vars)

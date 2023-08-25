@@ -227,7 +227,7 @@ def _get_samples_from_variants(variants):
 
 
 def calc_major_allele_stats_per_var(
-    variants: Iterator[ArraysChunk],
+    vars_iter: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
 ):
@@ -235,7 +235,7 @@ def calc_major_allele_stats_per_var(
         hist_kwargs = {}
     hist_kwargs["range"] = hist_kwargs.get("range", (0, 1))
 
-    samples, variants = _get_samples_from_variants(variants)
+    samples, variants = _get_samples_from_variants(vars_iter)
     pops = _calc_pops_idxs(pops, samples)
 
     return _calc_stats_per_var(
@@ -284,7 +284,7 @@ def _calc_stats_per_var(
 
 
 def calc_qual_stats_per_var(
-    variants: Iterator[ArraysChunk],
+    vars_iter: Iterator[ArraysChunk],
     hist_kwargs=None,
 ) -> Iterator[ArraysChunk]:
     if hist_kwargs is None:
@@ -295,7 +295,7 @@ def calc_qual_stats_per_var(
         raise ValueError("You should provide a range for the histogram in hist_kwargs")
 
     return _calc_stats_per_var(
-        variants=variants,
+        variants=vars_iter,
         calc_stats_for_chunk=calc_qual_per_var_for_chunk,
         get_stats_for_chunk_result=lambda x: x["quals"],
         hist_kwargs=hist_kwargs,
@@ -303,7 +303,7 @@ def calc_qual_stats_per_var(
 
 
 def calc_obs_het_stats_per_var(
-    variants: Iterator[ArraysChunk],
+    vars_iter: Iterator[ArraysChunk],
     pops: list[str] | None = None,
     hist_kwargs=None,
 ):
@@ -311,7 +311,7 @@ def calc_obs_het_stats_per_var(
         hist_kwargs = {}
     hist_kwargs["range"] = hist_kwargs.get("range", (0, 1))
 
-    samples, variants = _get_samples_from_variants(variants)
+    samples, variants = _get_samples_from_variants(vars_iter)
     pops = _calc_pops_idxs(pops, samples)
 
     return _calc_stats_per_var(
