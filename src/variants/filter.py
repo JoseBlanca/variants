@@ -2,10 +2,10 @@ from collections.abc import Iterator
 import itertools
 
 import numpy
-import pandas
 
 from variants.vars_io import GT_ARRAY_ID, VARIANTS_ARRAY_ID
-from variants.iterators import ArraysChunk, resize_chunks, run_pipeline, GenomeLocation
+from variants.iterators import ArraysChunk, resize_chunks, run_pipeline
+from variants.regions import GenomeLocation
 from variants.pop_stats import (
     _calc_gt_is_missing,
     _calc_missing_rate_per_var,

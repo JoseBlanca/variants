@@ -12,14 +12,10 @@ import pandas
 import more_itertools
 import allel
 
-from variants.iterators import (
-    ArraysChunk,
-    DirWithMetadata,
-    GenomeLocation,
-    as_genomic_region,
-    GenomicRegion,
-)
+from variants.iterators import ArraysChunk
 
+from variants.arrays_chunk import DirWithMetadata
+from variants.regions import GenomeLocation, as_genomic_region, GenomicRegion
 from variants.globals import (
     GT_ARRAY_ID,
     VARIANTS_ARRAY_ID,
