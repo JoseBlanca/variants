@@ -8,7 +8,6 @@ dependencies = [
     "pandas",
     "numpy",
     "pyarrow",
-    "chunked_array_set",
     "pytest"
 ]
 
