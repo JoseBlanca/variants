@@ -10,6 +10,7 @@ from variants.iterators import (
     VariantsCounter,
     group_in_genomic_windows,
     group_in_chroms,
+    sample_n_vars,
 )
 from .test_utils import create_normal_numpy_array, get_big_vcf, get_sample_variants
 from variants import read_vcf
@@ -146,3 +147,16 @@ def test_win_grouper():
         assert this_group_num_vars_per_chunk == expected_chunk_lens[group_idx]
 
     assert total_num_vars == num_vars_to_take
+
+
+def test_sample_vars_at_random():
+    vars = get_sample_variants()
+    num_vars_to_sample = 2
+    chunk = sample_n_vars(vars, num_vars_to_sample)
+    assert chunk.num_rows == num_vars_to_sample
+
+    for num_vars_to_sample in [49, 50, 100]:
+        vars = read_vcf(get_big_vcf(), num_variants_per_chunk=50)
+        vars = take_n_variants(vars, 200)
+        vars = sample_n_vars(vars, num_vars_to_sample)
+        assert vars.num_rows == num_vars_to_sample

@@ -206,6 +206,18 @@ def _get_array_rows(array, index):
     return array
 
 
+def _set_array_rows(array1, index, array2):
+    if isinstance(array1, numpy.ndarray):
+        array1[index, ...] = array2
+    elif isinstance(array1, pandas.DataFrame):
+        array1 = array1.copy()
+        array1.iloc[index, :] = array2
+    elif isinstance(array1, pandas.Series):
+        array1 = array1.copy()
+        array1.iloc[index] = array2
+    return array1
+
+
 def _apply_mask(array, index):
     if isinstance(array, numpy.ndarray):
         array = array[index, ...]
@@ -274,6 +286,14 @@ class ArraysChunk:
     def get_rows(self, index):
         arrays = {
             id: _get_array_rows(array, index) for id, array in self.arrays.items()
+        }
+
+        return self.__class__(arrays, source_metadata=self.source_metadata)
+
+    def set_rows(self, index, chunk: "ArraysChunk"):
+        arrays = {
+            id: _set_array_rows(array, index, chunk[id])
+            for id, array in self.arrays.items()
         }
 
         return self.__class__(arrays, source_metadata=self.source_metadata)
@@ -621,3 +641,71 @@ def group_in_genomic_windows(
         )
         for grouped_chunks in grouped_chunks_for_chrom:
             yield grouped_chunks
+
+
+def _fill_reservoir(vars: Iterator[ArraysChunk], num_vars):
+    chunks_for_reservoir = []
+    num_remaining_vars_to_fill = num_vars
+    for chunk in vars:
+        num_rows = chunk.num_rows
+        if num_rows <= num_remaining_vars_to_fill:
+            chunks_for_reservoir.append(chunk)
+            num_remaining_vars_to_fill -= num_rows
+        else:
+            chunks_for_reservoir.append(
+                chunk.get_rows(slice(None, num_remaining_vars_to_fill))
+            )
+            remaining_chunk = chunk.get_rows(slice(num_remaining_vars_to_fill, None))
+            break
+
+    vars = itertools.chain([remaining_chunk], vars)
+    reservoir = _concatenate_chunks(chunks_for_reservoir)
+
+    if reservoir.num_rows < num_vars:
+        raise ValueError(
+            "{num_vars} asked to be sampled, but only {reservoir.num_rows} available"
+        )
+
+    return reservoir, vars
+
+
+def _choose_new_sample(chunk, starting_num_row, num_items_asked):
+    int_ranges_to_choose_from = numpy.arange(
+        starting_num_row, chunk.num_rows + starting_num_row
+    )
+
+    random_nums_up_to_range = numpy.random.randint(int_ranges_to_choose_from)
+    uniq_random_nums, uniq_random_num_last_pos = numpy.unique(
+        numpy.flip(random_nums_up_to_range), return_index=True
+    )
+    random_nums_small_enough = uniq_random_nums < num_items_asked
+
+    if not any(random_nums_small_enough):
+        return None
+
+    rows_to_get_from_this_chunk = uniq_random_num_last_pos[random_nums_small_enough]
+    rows_to_remove_from_reservoir = uniq_random_nums[random_nums_small_enough]
+    new_sampled_rows = chunk.get_rows(rows_to_get_from_this_chunk)
+
+    return new_sampled_rows, rows_to_remove_from_reservoir
+
+
+def sample_n_vars(
+    vars: Iterator[ArraysChunk], num_vars: int, keep_order=False
+) -> ArraysChunk:
+    # This function uses a variation of the  Reservoir L algorithm
+
+    if keep_order:
+        raise NotImplementedError()
+
+    reservoir, vars = _fill_reservoir(vars, num_vars)
+    current_num_row = reservoir.num_rows
+    for chunk in vars:
+        res = _choose_new_sample(chunk, current_num_row, num_vars)
+        if res is not None:
+            new_sampled_vars, rows_to_remove_from_reservoir = res
+            reservoir.set_rows(rows_to_remove_from_reservoir, new_sampled_vars)
+
+        current_num_row += chunk.num_rows
+
+    return reservoir
