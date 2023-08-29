@@ -23,6 +23,13 @@ def test_pairwise_kosman_dists():
     assert numpy.isclose([dists.loc["tegucigalpa", "pi378994"]], [0.440000])
     assert dists.shape == (598, 598)
 
+    num_vars_to_take = 100
+    vars = read_vcf(get_big_vcf(), num_variants_per_chunk=10)
+    vars = take_n_variants(vars, num_vars_to_take)
+
+    dists2 = calc_pairwise_kosman_dists(vars, num_processes=1).square_dists
+    assert numpy.allclose(dists, dists2)
+
 
 def test_kosman_2_indis():
     a = numpy.array(

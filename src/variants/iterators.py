@@ -1,8 +1,9 @@
 from collections.abc import Iterator
-from typing import Callable
+from typing import Any, Callable
 from collections import defaultdict
 import functools
 import itertools
+import multiprocessing
 
 
 import numpy
@@ -161,22 +162,38 @@ def take_n_variants(
     return take_n_rows(vars_iter, num_rows=num_variants)
 
 
+class _ChunkProcessor:
+    def __init__(self, map_functs):
+        self.map_functs = map_functs
+
+    def __call__(self, item):
+        processed_item = item
+        for one_funct in self.map_functs:
+            processed_item = one_funct(processed_item)
+        return processed_item
+
+
 def run_pipeline(
     chunks: Iterator[ArraysChunk],
     map_functs: list[Callable] | None = None,
     reduce_funct: Callable | None = None,
     reduce_initialializer=None,
+    num_processes: int = 1,
 ):
     if map_functs is None:
         map_functs = []
 
-    def funct(item):
-        processed_item = item
-        for one_funct in map_functs:
-            processed_item = one_funct(processed_item)
-        return processed_item
+    process_chunk = _ChunkProcessor(map_functs)
 
-    processed_chunks = map(funct, chunks)
+    use_multiprocessing = num_processes > 1
+
+    if use_multiprocessing:
+        pool = multiprocessing.Pool(3)
+        map_ = pool.map
+    else:
+        map_ = map
+
+    processed_chunks = map_(process_chunk, chunks)
 
     if reduce_funct:
         reduced_result = functools.reduce(
@@ -185,6 +202,9 @@ def run_pipeline(
         result = reduced_result
     else:
         result = processed_chunks
+
+    if use_multiprocessing:
+        pool.close()
 
     return result
 

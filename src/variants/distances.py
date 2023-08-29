@@ -183,7 +183,9 @@ def _reduce_kosman_dists(acummulated_dists_and_snps, new_dists_and_snps):
     return abs_distances, n_snps_matrix
 
 
-def calc_pairwise_kosman_dists(vars_iter: Iterator[Variants], min_num_snps=None):
+def calc_pairwise_kosman_dists(
+    vars_iter: Iterator[Variants], min_num_snps=None, num_processes=2
+):
     """It calculates the distance between individuals using the Kosman
     distance.
 
@@ -202,6 +204,7 @@ def calc_pairwise_kosman_dists(vars_iter: Iterator[Variants], min_num_snps=None)
         map_functs=[_calc_kosman_dist_for_chunk],
         reduce_funct=_reduce_kosman_dists,
         reduce_initialializer=None,
+        num_processes=num_processes,
     )
     abs_distances, n_snps_matrix = res
 
@@ -210,8 +213,6 @@ def calc_pairwise_kosman_dists(vars_iter: Iterator[Variants], min_num_snps=None)
 
     with numpy.errstate(invalid="ignore"):
         dists = abs_distances / n_snps_matrix
-
-    d = len(samples)
 
     dists = Distances(dists, samples)
     return dists
