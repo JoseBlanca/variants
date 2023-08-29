@@ -229,6 +229,10 @@ class Variants(ArraysChunk):
     def samples(self):
         return self.arrays[GT_ARRAY_ID].samples
 
+    @property
+    def num_variants(self):
+        return self.num_rows
+
 
 def _as_chunk(chunk):
     if isinstance(chunk, ArraysChunk):

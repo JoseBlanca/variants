@@ -11,6 +11,7 @@ from variants.iterators import (
     group_in_genomic_windows,
     group_in_chroms,
     sample_n_vars,
+    sample_n_vars_per_genomic_window,
 )
 from .test_utils import create_normal_numpy_array, get_big_vcf, get_sample_variants
 from variants import read_vcf
@@ -100,14 +101,15 @@ def test_chrom_grouper():
 
 
 def test_win_grouper():
-    vars = get_sample_variants()
-    grouped_vars = group_in_genomic_windows(vars, 20000)
-    expected_poss = [[14370, 17330], [1110696], [1230237, 1234567]]
-    for group_idx, group_of_chunks in enumerate(grouped_vars):
-        for chunk in group_of_chunks:
-            assert (
-                list(chunk.arrays[VARIANTS_ARRAY_ID]["pos"]) == expected_poss[group_idx]
-            )
+    for num_vars_per_chunk in [1, 2, 3, 4, 5]:
+        vars = get_sample_variants(num_variants_per_chunk=num_vars_per_chunk)
+        grouped_vars = group_in_genomic_windows(vars, 20000)
+        expected_poss = [[14370, 17330], [1110696], [1230237, 1234567]]
+        for group_idx, group_of_chunks in enumerate(grouped_vars):
+            poss_in_group = []
+            for chunk in group_of_chunks:
+                poss_in_group.extend(chunk.arrays[VARIANTS_ARRAY_ID]["pos"])
+            assert poss_in_group == expected_poss[group_idx]
 
     num_vars_to_take = 10000
     vars = read_vcf(get_big_vcf(), num_variants_per_chunk=1000)
@@ -160,3 +162,23 @@ def test_sample_vars_at_random():
         vars = take_n_variants(vars, 200)
         vars = sample_n_vars(vars, num_vars_to_sample)
         assert vars.num_rows == num_vars_to_sample
+
+
+def test_window_sampling():
+    for chunk_len in [200, 500, 1000, 10000]:
+        vars = read_vcf(get_big_vcf(), num_variants_per_chunk=chunk_len)
+        vars = read_vcf(get_big_vcf(), num_variants_per_chunk=100)
+        vars = read_vcf(get_big_vcf(), num_variants_per_chunk=500)
+        vars = read_vcf(get_big_vcf(), num_variants_per_chunk=1000)
+        num_vars_to_take = 10000
+        vars = take_n_variants(vars, num_vars_to_take)
+        counter = VariantsCounter()
+        vars = counter(vars)
+        sampled_vars = sample_n_vars_per_genomic_window(
+            vars, win_len_in_bp=100000, num_vars_to_take=1
+        )
+        counter2 = VariantsCounter()
+        sampled_vars = counter2(sampled_vars)
+        sampled_vars = list(sampled_vars)
+        assert counter.num_vars == num_vars_to_take
+        assert counter2.num_vars == 516

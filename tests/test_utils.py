@@ -7,6 +7,7 @@ import pandas
 
 from variants.iterators import ArraysChunk
 from variants import read_vcf
+from variants.globals import DEFAULT_NUM_VARIANTS_PER_CHUNK
 
 
 def create_normal_numpy_array(shape, loc=0.0, scale=1.0):
@@ -81,7 +82,7 @@ def get_vcf_sample():
     return fhand
 
 
-def get_sample_variants():
+def get_sample_variants(num_variants_per_chunk=DEFAULT_NUM_VARIANTS_PER_CHUNK):
     fhand = get_vcf_sample()
-    variants = read_vcf(fhand)
+    variants = read_vcf(fhand, num_variants_per_chunk=num_variants_per_chunk)
     return variants

@@ -306,6 +306,9 @@ def _group_vars_same_chrom_in_wins(vars, win_len):
             remaining_chunk = current_chunk.get_rows(numpy.logical_not(to_yield))
             current_chunk = remaining_chunk
             current_pos = None
+        elif numpy.all(numpy.logical_not(to_yield)):
+            current_pos = None
+            continue
         else:
             raise RuntimeError(
                 "Fixme, it is not possible not having anything to yield at this point"
@@ -322,6 +325,7 @@ def _group_genomic_windows_all_chunks_same_chrom(vars, win_len, num_rows_per_chu
     for pos, grouped_pos_and_chunks in pos_and_grouped_chunkss:
         grouped_chunks = (chunk for pos, chunk in grouped_pos_and_chunks)
         grouped_chunks = resize_chunks(grouped_chunks, num_rows_per_chunk)
+
         yield grouped_chunks
 
 
@@ -346,6 +350,7 @@ def group_in_genomic_windows(
 def _fill_reservoir(vars: Iterator[ArraysChunk], num_vars):
     chunks_for_reservoir = []
     num_remaining_vars_to_fill = num_vars
+    remaining_chunk = None
     for chunk in vars:
         num_rows = chunk.num_rows
         if num_rows <= num_remaining_vars_to_fill:
@@ -357,6 +362,8 @@ def _fill_reservoir(vars: Iterator[ArraysChunk], num_vars):
             )
             remaining_chunk = chunk.get_rows(slice(num_remaining_vars_to_fill, None))
             break
+    if remaining_chunk is None:
+        raise ValueError("No vars to sample")
 
     vars = itertools.chain([remaining_chunk], vars)
     reservoir = _concatenate_chunks(chunks_for_reservoir)
@@ -409,3 +416,35 @@ def sample_n_vars(
         current_num_row += chunk.num_rows
 
     return reservoir
+
+
+def _sample_n_vars_per_window(
+    vars_iter: Iterator[ArraysChunk], win_len_in_bp, num_vars_to_take: int = 1
+):
+    for idx, vars_in_win in enumerate(
+        group_in_genomic_windows(vars_iter, win_len=win_len_in_bp)
+    ):
+        try:
+            vars = sample_n_vars(vars_in_win, num_vars=num_vars_to_take)
+        except ValueError:
+            continue
+        yield vars
+
+
+def sample_n_vars_per_genomic_window(
+    vars_iter: Iterator[ArraysChunk], win_len_in_bp, num_vars_to_take: int = 1
+):
+    try:
+        chunk = next(vars_iter)
+    except StopIteration:
+        return iter([])
+    num_vars_per_chunk = chunk.num_rows
+    vars_iter = itertools.chain([chunk], vars_iter)
+
+    vars_iter = _sample_n_vars_per_window(
+        vars_iter=vars_iter,
+        win_len_in_bp=win_len_in_bp,
+        num_vars_to_take=num_vars_to_take,
+    )
+
+    return resize_chunks(vars_iter, desired_num_rows=num_vars_per_chunk)
