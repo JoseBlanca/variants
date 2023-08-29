@@ -227,11 +227,15 @@ class ArraysChunk:
 class Variants(ArraysChunk):
     @property
     def samples(self):
-        return self.arrays[GT_ARRAY_ID].samples
+        return self.genotypes.samples
 
     @property
     def num_variants(self):
         return self.num_rows
+
+    @property
+    def genotypes(self):
+        return self.arrays[GT_ARRAY_ID]
 
 
 def _as_chunk(chunk):
