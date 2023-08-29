@@ -211,11 +211,7 @@ def calc_pairwise_kosman_dists(vars_iter: Iterator[Variants], min_num_snps=None)
     with numpy.errstate(invalid="ignore"):
         dists = abs_distances / n_snps_matrix
 
-    print(len(samples))
     d = len(samples)
-    print(dists.shape[0])
-    print(dists.shape[0] * 2)
-    print(d * (d - 1))
 
     dists = Distances(dists, samples)
     return dists
