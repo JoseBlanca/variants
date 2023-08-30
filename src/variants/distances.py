@@ -109,7 +109,7 @@ class _IndiPairwiseCalculator:
     def calc_dist(
         self, variations, method="kosman", pop1_samples=None, pop2_samples=None
     ):
-        gts = variations.genotypes.values
+        gts = variations.gt_array
         dist_cache = self._pairwise_dist_cache
         indi_cache = self._indi_cache
 
