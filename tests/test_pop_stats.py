@@ -4,7 +4,7 @@ from variants.variants import Variants, Genotypes
 from variants.pop_stats import (
     _calc_obs_het_per_var_for_chunk,
     calc_obs_het_stats_per_var,
-    _get_different_alleles,
+    get_different_alleles,
     _count_alleles_per_var,
     _calc_maf_per_var_for_chunk,
     calc_major_allele_stats_per_var,
@@ -45,7 +45,7 @@ def test_obs_het_per_var():
     )
     chunk = Variants({GT_ARRAY_ID: Genotypes(gts, samples=[1, 2, 3, 4])})
     variants = iter([chunk])
-    assert _get_different_alleles(variants) == [0, 1, 3]
+    assert get_different_alleles(variants) == [0, 1, 3]
 
 
 def test_count_alleles_per_var():

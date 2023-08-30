@@ -234,6 +234,10 @@ class Variants(ArraysChunk):
         return self.num_rows
 
     @property
+    def ploidy(self):
+        return self.gt_array.shape[2]
+
+    @property
     def gt_array(self) -> numpy.ndarray:
         return self.arrays[GT_ARRAY_ID].values
 

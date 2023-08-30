@@ -9,7 +9,9 @@ from variants.distances import (
     calc_pairwise_kosman_dists,
     _kosman,
     _IndiPairwiseCalculator,
+    calc_jost_dest_pop_distance,
 )
+from variants.pop_stats import get_different_alleles
 
 
 def test_pairwise_kosman_dists():
@@ -195,3 +197,94 @@ def test_kosman_pairwise():
     distance = abs_dist / n_snps
     expected = [0.33333333, 0.75, 0.75, 0.5, 0.5, 0.0]
     assert numpy.allclose(distance, expected)
+
+
+def test_dest_pop_dists():
+    num_vars_to_take = 100
+    vars = read_vcf(get_big_vcf(), num_variants_per_chunk=10)
+    vars = take_n_variants(vars, num_vars_to_take)
+    pops = {
+        "pop1": [
+            "ts-63",
+            "ts-168",
+            "ts-178",
+            "ts-313",
+            "ts-427",
+            "ts-10",
+            "ts-1",
+            "ts-620",
+            "bgv007981",
+            "stupicke",
+        ],
+        "pop2": [
+            "ts-160",
+            "ts-48",
+            "ts-437",
+            "ts-41",
+            "ts-243",
+            "ts-520",
+            "ts-555",
+            "ts-630",
+            "ts-576",
+            "bgv014515",
+            "bgv006454",
+        ],
+    }
+    alleles = get_different_alleles(
+        vars,
+        samples_to_consider=[sample for samples in pops.values() for sample in samples],
+    )
+
+    vars = read_vcf(get_big_vcf(), num_variants_per_chunk=10)
+    vars = take_n_variants(vars, num_vars_to_take)
+    dists = calc_jost_dest_pop_distance(
+        vars, pops, alleles=alleles, min_num_genotypes=0
+    )
+    assert numpy.allclose(dists.dist_vector, [0.00251768])
+
+
+def test_dest_jost_distance():
+    gts = [
+        [  #          sample pop is_het tot_het freq_het
+            (1, 1),  #    1     1
+            (1, 3),  #    2     1     1
+            (1, 2),  #    3     1     1
+            (1, 4),  #    4     1     1
+            (3, 3),  #    5     1             3     3/5=0.6
+            (3, 2),  #    6     2     1
+            (3, 4),  #    7     2     1
+            (2, 2),  #    8     2
+            (2, 4),  #    9     2     1
+            (4, 4),  #   10     2
+            (-1, -1),  # 11     2             3     3/6=0.5
+        ],
+        [
+            (1, 3),
+            (1, 1),
+            (1, 1),
+            (1, 3),
+            (3, 3),
+            (3, 2),
+            (3, 4),
+            (2, 2),
+            (2, 4),
+            (4, 4),
+            (-1, -1),
+        ],
+    ]
+    samples = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    gts = Genotypes(numpy.array(gts), samples=samples)
+    snps = Variants(arrays={GT_ARRAY_ID: gts})
+
+    pops = {"pop1": [1, 2, 3, 4, 5], "pop2": [6, 7, 8, 9, 10, 11]}
+    alleles = get_different_alleles(iter([snps]))
+
+    dists = calc_jost_dest_pop_distance(
+        iter([snps]), pops=pops, alleles=alleles, min_num_genotypes=0
+    )
+    assert numpy.allclose(dists.dist_vector, [0.65490196])
+
+    dists = calc_jost_dest_pop_distance(
+        iter([snps]), pops=pops, alleles=alleles, min_num_genotypes=6
+    )
+    assert numpy.all(numpy.isnan(dists.dist_vector))

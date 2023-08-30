@@ -5,8 +5,14 @@ import itertools
 import numpy
 import pandas
 
-from variants.iterators import run_pipeline, ArraysChunk, get_samples_from_chunk
+from variants.iterators import (
+    run_pipeline,
+    ArraysChunk,
+    get_samples_from_chunk,
+    _peek_vars_iter,
+)
 from variants.globals import GT_ARRAY_ID, MISSING_INT, VARIANTS_ARRAY_ID
+from variants.variants import Variants
 
 from enum import Enum
 
@@ -59,22 +65,31 @@ def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):
     gts = chunk[GT_ARRAY_ID].values
+    return _calc_obs_het_per_var_for_gts(gts, pops)
 
+
+def _calc_obs_het_per_var_for_gts(gts, pops):
     gt_is_missing = _calc_gt_is_missing(gts)
     gt_is_het = _calc_gts_is_het(gts, gt_is_missing=gt_is_missing)
     gt_is_het = numpy.logical_and(gt_is_het, numpy.logical_not(gt_is_missing))
 
     obs_het_per_var = {}
+    called_gts_per_var = {}
     for pop_id, pop_slice in pops.items():
         num_vars_het_per_var = numpy.sum(gt_is_het[:, pop_slice], axis=1)
-        num_non_missing_per_var = gts.shape[1] - numpy.sum(
+        num_samples = len(pop_slice) if isinstance(pop_slice, list) else gts.shape[1]
+        num_non_missing_per_var = num_samples - numpy.sum(
             gt_is_missing[:, pop_slice], axis=1
         )
         with numpy.errstate(invalid="ignore"):
             obs_het_per_var[pop_id] = num_vars_het_per_var / num_non_missing_per_var
+        called_gts_per_var[pop_id] = num_non_missing_per_var
 
     obs_het_per_var = pandas.DataFrame(obs_het_per_var)
-    return {"obs_het_per_var": obs_het_per_var}
+    return {
+        "obs_het_per_var": obs_het_per_var,
+        "called_gts_per_var": called_gts_per_var,
+    }
 
 
 def _prepare_bins(
@@ -129,14 +144,24 @@ def _collect_stats_from_pop_dframes(
     return accumulated_result
 
 
-def _get_different_alleles(vars):
+def get_different_alleles(
+    vars_iter: Iterator[Variants], samples_to_consider: list[str] | None = None
+):
     def accumulate_alleles(accumulated_alleles, new_alleles):
         accumulated_alleles.update(new_alleles)
         return accumulated_alleles
 
+    if samples_to_consider:
+        chunk, vars_iter = _peek_vars_iter(vars_iter)
+        samples_slice = _calc_pops_idxs(
+            pops={0: samples_to_consider}, samples=chunk.samples
+        )[0]
+    else:
+        samples_slice = slice(None, None)
+
     result = run_pipeline(
-        vars,
-        map_functs=[lambda chunk: numpy.unique(chunk[GT_ARRAY_ID].values)],
+        vars_iter,
+        map_functs=[lambda chunk: numpy.unique(chunk.gt_array[:, samples_slice, :])],
         reduce_funct=accumulate_alleles,
         reduce_initialializer=set(),
     )
@@ -144,7 +169,13 @@ def _get_different_alleles(vars):
     return result
 
 
-def _count_alleles_per_var(gts, pops, calc_freqs, alleles=None, missing_gt=MISSING_INT):
+def _count_alleles_per_var(
+    gts,
+    pops: dict[str, list[int]],
+    calc_freqs: bool,
+    alleles=None,
+    missing_gt=MISSING_INT,
+):
     alleles_in_chunk = set(numpy.unique(gts)).difference([missing_gt])
 
     if alleles is not None:

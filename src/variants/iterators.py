@@ -468,3 +468,13 @@ def sample_n_vars_per_genomic_window(
     )
 
     return resize_chunks(vars_iter, desired_num_rows=num_vars_per_chunk)
+
+
+def _peek_vars_iter(vars_iter):
+    try:
+        chunk = next(vars_iter)
+    except StopIteration:
+        raise ValueError("No vars in iterator")
+
+    vars_iter = itertools.chain([chunk], vars_iter)
+    return chunk, vars_iter

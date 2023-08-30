@@ -6,8 +6,13 @@ import pandas
 import scipy
 
 from variants.variants import Variants
-from variants.iterators import run_pipeline
-from variants.globals import MISSING_INT
+from variants.iterators import run_pipeline, _peek_vars_iter
+from variants.globals import MISSING_INT, MIN_NUM_GENOTYPES_FOR_POP_STAT
+from variants.pop_stats import (
+    _calc_pops_idxs,
+    _calc_obs_het_per_var_for_gts,
+    _count_alleles_per_var,
+)
 
 
 class Distances:
@@ -191,13 +196,8 @@ def calc_pairwise_kosman_dists(
 
     The Kosman distance is explained in DOI: 10.1111/j.1365-294X.2005.02416.x
     """
-
-    try:
-        chunk = next(vars_iter)
-    except StopIteration:
-        raise ValueError("No vars to calculate distances")
+    chunk, vars_iter = _peek_vars_iter(vars_iter)
     samples = chunk.samples
-    vars_iter = itertools.chain([chunk], vars_iter)
 
     res = run_pipeline(
         vars_iter,
@@ -218,6 +218,201 @@ def calc_pairwise_kosman_dists(
     return dists
 
 
-# TODO
-# calc_unbiased_nei_pop_dists
-# calc_dest_pop_dists
+def hmean(array, axis=0, dtype=None):
+    # Harmonic mean only defined if greater than zero
+    if isinstance(array, numpy.ma.MaskedArray):
+        size = array.count(axis)
+    else:
+        if axis is None:
+            array = array.ravel()
+            size = array.shape[0]
+        else:
+            size = array.shape[axis]
+    with numpy.errstate(divide="ignore"):
+        inverse_mean = numpy.sum(1.0 / array, axis=axis, dtype=dtype)
+    is_inf = numpy.logical_not(numpy.isfinite(inverse_mean))
+    hmean = size / inverse_mean
+    hmean[is_inf] = numpy.nan
+
+    return hmean
+
+
+def _calc_pairwise_dest(
+    gts, pop_idxs, sorted_pop_ids, alleles, min_num_genotypes, ploidy
+):
+    debug = False
+
+    num_pops = 2
+    pop1, pop2 = sorted_pop_ids
+
+    res = _count_alleles_per_var(gts, pops=pop_idxs, calc_freqs=True, alleles=alleles)
+    allele_freq1 = res["counts"][pop1]["allelic_freqs"].values
+    allele_freq2 = res["counts"][pop2]["allelic_freqs"].values
+
+    exp_het1 = 1 - numpy.sum(allele_freq1**ploidy, axis=1)
+    exp_het2 = 1 - numpy.sum(allele_freq2**ploidy, axis=1)
+    hs_per_var = (exp_het1 + exp_het2) / 2
+    if debug:
+        print("hs_per_var", hs_per_var)
+
+    global_allele_freq = (allele_freq1 + allele_freq2) / 2
+    global_exp_het = 1 - numpy.sum(global_allele_freq**ploidy, axis=1)
+    ht_per_var = global_exp_het
+    if debug:
+        print("ht_per_var", ht_per_var)
+
+    res = _calc_obs_het_per_var_for_gts(gts, pops=pop_idxs)
+    obs_het_per_var = res["obs_het_per_var"]
+    obs_het1 = obs_het_per_var[pop1].values
+    obs_het2 = obs_het_per_var[pop2].values
+    if debug:
+        print(f"{obs_het1=}")
+        print(f"{obs_het2=}")
+    called_gts_per_var = res["called_gts_per_var"]
+    called_gts1 = called_gts_per_var[pop1]
+    called_gts2 = called_gts_per_var[pop2]
+
+    called_gts = numpy.array([called_gts1, called_gts2])
+    try:
+        called_gts_hmean = hmean(called_gts, axis=0)
+    except ValueError:
+        called_gts_hmean = None
+
+    if called_gts_hmean is None:
+        num_vars = gts.shape[0]
+        corrected_hs = numpy.full((num_vars,), numpy.nan)
+        corrected_ht = numpy.full((num_vars,), numpy.nan)
+    else:
+        mean_obs_het_per_var = numpy.nanmean(numpy.array([obs_het1, obs_het2]), axis=0)
+        corrected_hs = (called_gts_hmean / (called_gts_hmean - 1)) * (
+            hs_per_var - (mean_obs_het_per_var / (2 * called_gts_hmean))
+        )
+        if debug:
+            print("mean_obs_het_per_var", mean_obs_het_per_var)
+            print("corrected_hs", corrected_hs)
+        corrected_ht = (
+            ht_per_var
+            + (corrected_hs / (called_gts_hmean * num_pops))
+            - (mean_obs_het_per_var / (2 * called_gts_hmean * num_pops))
+        )
+        if debug:
+            print("corrected_ht", corrected_ht)
+
+        not_enough_gts = numpy.logical_or(
+            called_gts1 < min_num_genotypes, called_gts2 < min_num_genotypes
+        )
+        corrected_hs[not_enough_gts] = numpy.nan
+        corrected_ht[not_enough_gts] = numpy.nan
+
+    num_vars_in_chunk = numpy.count_nonzero(~numpy.isnan(corrected_hs))
+    hs_in_chunk = numpy.nansum(corrected_hs)
+    ht_in_chunk = numpy.nansum(corrected_ht)
+    return {"hs": hs_in_chunk, "ht": ht_in_chunk, "num_vars": num_vars_in_chunk}
+
+
+class _DestPopDistCalculator:
+    def __init__(self, pop_idxs, sorted_pop_ids, alleles, min_num_genotypes, ploidy):
+        self.pop_idxs = pop_idxs
+        self.pop_ids = sorted_pop_ids
+        self.alleles = alleles
+        self.min_num_genotypes = min_num_genotypes
+        self.ploidy = ploidy
+
+    def __call__(self, vars: Variants):
+        pop_idxs = self.pop_idxs
+        gts = vars.gt_array
+        pop_ids = self.pop_ids
+        num_pops = len(pop_ids)
+
+        corrected_hs = pandas.DataFrame(
+            numpy.zeros(shape=(num_pops, num_pops), dtype=float),
+            columns=pop_ids,
+            index=pop_ids,
+        )
+        corrected_ht = pandas.DataFrame(
+            numpy.zeros(shape=(num_pops, num_pops), dtype=float),
+            columns=pop_ids,
+            index=pop_ids,
+        )
+        num_vars = pandas.DataFrame(
+            numpy.zeros(shape=(num_pops, num_pops), dtype=int),
+            columns=pop_ids,
+            index=pop_ids,
+        )
+
+        for pop1, pop2 in itertools.combinations(self.pop_ids, 2):
+            res = _calc_pairwise_dest(
+                gts,
+                sorted_pop_ids=(pop1, pop2),
+                pop_idxs=pop_idxs,
+                alleles=self.alleles,
+                min_num_genotypes=self.min_num_genotypes,
+                ploidy=self.ploidy,
+            )
+            corrected_hs.loc[pop1, pop2] = res["hs"]
+            corrected_ht.loc[pop1, pop2] = res["ht"]
+            num_vars.loc[pop1, pop2] = res["num_vars"]
+            corrected_hs.loc[pop2, pop1] = res["hs"]
+            corrected_ht.loc[pop2, pop1] = res["ht"]
+            num_vars.loc[pop2, pop1] = res["num_vars"]
+        return {"hs": corrected_hs, "ht": corrected_ht, "num_vars": num_vars}
+
+
+def _accumulate_dest_results(accumulated_result, new_result):
+    if accumulated_result is None:
+        accumulated_hs = new_result["hs"]
+        accumulated_ht = new_result["ht"]
+        total_num_vars = new_result["num_vars"]
+    else:
+        accumulated_hs = accumulated_result["hs"] + new_result["hs"]
+        accumulated_ht = accumulated_result["ht"] + new_result["ht"]
+        total_num_vars = accumulated_result["num_vars"] + new_result["num_vars"]
+    return {"hs": accumulated_hs, "ht": accumulated_ht, "num_vars": total_num_vars}
+
+
+def calc_jost_dest_pop_distance(
+    vars_iter: Iterator[Variants],
+    pops: dict[list[str]],
+    alleles: list[int],
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
+):
+    """This is an implementation of the formulas proposed in GenAlex"""
+
+    chunk, vars_iter = _peek_vars_iter(vars_iter)
+    samples = chunk.samples
+    ploidy = chunk.ploidy
+    pop_idxs = _calc_pops_idxs(pops, samples)
+    sorted_pop_ids = sorted(pop_idxs.keys())
+    calc_dest_dists = _DestPopDistCalculator(
+        pop_idxs=pop_idxs,
+        sorted_pop_ids=sorted_pop_ids,
+        alleles=alleles,
+        min_num_genotypes=min_num_genotypes,
+        ploidy=ploidy,
+    )
+
+    res = run_pipeline(
+        vars_iter, map_functs=[calc_dest_dists], reduce_funct=_accumulate_dest_results
+    )
+    accumulated_hs = res["hs"]
+    accumulated_ht = res["ht"]
+    num_vars = res["num_vars"]
+
+    tot_n_pops = len(pops)
+    dists = numpy.empty(int((tot_n_pops**2 - tot_n_pops) / 2))
+    dists[:] = numpy.nan
+    num_pops = 2
+    for idx, (pop_id1, pop_id2) in enumerate(itertools.combinations(sorted_pop_ids, 2)):
+        with numpy.errstate(invalid="ignore"):
+            corrected_hs = (
+                accumulated_hs.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
+            )
+            corrected_ht = (
+                accumulated_ht.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
+            )
+        dest = (num_pops / (num_pops - 1)) * (
+            (corrected_ht - corrected_hs) / (1 - corrected_hs)
+        )
+        dists[idx] = dest
+    dists = Distances(dists, sorted_pop_ids)
+    return dists
