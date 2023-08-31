@@ -245,7 +245,13 @@ def _calc_pairwise_dest(
     num_pops = 2
     pop1, pop2 = sorted_pop_ids
 
-    res = _count_alleles_per_var(gts, pops=pop_idxs, calc_freqs=True, alleles=alleles)
+    res = _count_alleles_per_var(
+        gts,
+        pops=pop_idxs,
+        calc_freqs=True,
+        alleles=alleles,
+        min_num_genotypes=min_num_genotypes,
+    )
     allele_freq1 = res["counts"][pop1]["allelic_freqs"].values
     allele_freq2 = res["counts"][pop2]["allelic_freqs"].values
 

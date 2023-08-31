@@ -11,7 +11,12 @@ from variants.iterators import (
     get_samples_from_chunk,
     _peek_vars_iter,
 )
-from variants.globals import GT_ARRAY_ID, MISSING_INT, VARIANTS_ARRAY_ID
+from variants.globals import (
+    GT_ARRAY_ID,
+    MISSING_INT,
+    VARIANTS_ARRAY_ID,
+    MIN_NUM_GENOTYPES_FOR_POP_STAT,
+)
 from variants.variants import Variants
 
 from enum import Enum
@@ -64,7 +69,7 @@ def _calc_obs_het_rate_per_var(gts, gt_is_missing=None):
 
 
 def _calc_obs_het_per_var_for_chunk(chunk, pops):
-    gts = chunk[GT_ARRAY_ID].values
+    gts = chunk.gt_array
     return _calc_obs_het_per_var_for_gts(gts, pops)
 
 
@@ -175,8 +180,10 @@ def _count_alleles_per_var(
     calc_freqs: bool,
     alleles=None,
     missing_gt=MISSING_INT,
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
 ):
     alleles_in_chunk = set(numpy.unique(gts)).difference([missing_gt])
+    ploidy = gts.shape[2]
 
     if alleles is not None:
         if alleles_in_chunk.difference(alleles):
@@ -213,6 +220,13 @@ def _count_alleles_per_var(
                 (num_allelic_gts_per_snp.shape[0], 1)
             )
             allelic_freqs_per_snp = allele_counts / num_allelic_gts_per_snp
+            num_gts_per_snp = (
+                num_allelic_gts_per_snp.reshape((num_allelic_gts_per_snp.size,))
+                / ploidy
+            )
+            not_enough_data = num_gts_per_snp < min_num_genotypes
+            allelic_freqs_per_snp[not_enough_data] = numpy.nan
+
             result[pop_id]["allelic_freqs"] = allelic_freqs_per_snp
 
     return {"counts": result, "alleles": alleles_in_chunk}
@@ -231,13 +245,19 @@ def _calc_maf_per_var(gts, missing_gt=MISSING_INT):
     return mafs
 
 
-def _calc_maf_per_var_for_chunk(chunk, pops, missing_gt=MISSING_INT):
+def _calc_maf_per_var_for_chunk(
+    chunk,
+    pops,
+    missing_gt=MISSING_INT,
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
+):
     res = _count_alleles_per_var(
         chunk[GT_ARRAY_ID].values,
         pops,
         alleles=None,
         missing_gt=missing_gt,
         calc_freqs=True,
+        min_num_genotypes=min_num_genotypes,
     )
     major_allele_freqs = {}
     for pop, pop_res in res["counts"].items():
@@ -260,6 +280,7 @@ def _get_samples_from_variants(variants):
 def calc_major_allele_stats_per_var(
     vars_iter: Iterator[ArraysChunk],
     pops: list[str] | None = None,
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
     hist_kwargs=None,
 ):
     if hist_kwargs is None:
@@ -271,7 +292,9 @@ def calc_major_allele_stats_per_var(
 
     return _calc_stats_per_var(
         variants=variants,
-        calc_stats_for_chunk=partial(_calc_maf_per_var_for_chunk, pops=pops),
+        calc_stats_for_chunk=partial(
+            _calc_maf_per_var_for_chunk, pops=pops, min_num_genotypes=min_num_genotypes
+        ),
         get_stats_for_chunk_result=lambda x: x["major_allele_freqs_per_var"],
         hist_kwargs=hist_kwargs,
     )
@@ -349,5 +372,112 @@ def calc_obs_het_stats_per_var(
         variants=variants,
         calc_stats_for_chunk=partial(_calc_obs_het_per_var_for_chunk, pops=pops),
         get_stats_for_chunk_result=lambda x: x["obs_het_per_var"],
+        hist_kwargs=hist_kwargs,
+    )
+
+
+def _calc_expected_het_per_snp(
+    gts, pops, min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT, ploidy=None
+):
+    if ploidy is None:
+        ploidy = gts.shape[2]
+
+    res = _count_alleles_per_var(
+        gts,
+        pops=pops,
+        calc_freqs=True,
+        min_num_genotypes=min_num_genotypes,
+    )
+
+    sorted_pops = sorted(pops.keys())
+
+    missing_allelic_gts = {
+        pop_id: res["counts"][pop_id]["missing_gts_per_var"] for pop_id in sorted_pops
+    }
+    missing_allelic_gts = pandas.DataFrame(missing_allelic_gts, columns=sorted_pops)
+
+    exp_het = {}
+    for pop_id in sorted_pops:
+        allele_freqs = res["counts"][pop_id]["allelic_freqs"].values
+        exp_het[pop_id] = 1 - numpy.sum(allele_freqs**ploidy, axis=1)
+    exp_het = pandas.DataFrame(exp_het, columns=sorted_pops)
+
+    return {"exp_het": exp_het, "missing_allelic_gts": missing_allelic_gts}
+
+
+def _calc_unbiased_exp_het_per_snp(
+    gts, pops, min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT, ploidy=None
+):
+    "Calculated using Unbiased Heterozygosity (Codom Data) Genalex formula"
+    if ploidy is None:
+        ploidy = gts.shape[2]
+
+    res = _calc_expected_het_per_snp(
+        gts,
+        pops=pops,
+        min_num_genotypes=min_num_genotypes,
+        ploidy=ploidy,
+    )
+    exp_het = res["exp_het"]
+
+    missing_allelic_gts = res["missing_allelic_gts"]
+
+    num_allelic_gtss = []
+    for pop in missing_allelic_gts.columns:
+        pop_slice = pops[pop]
+        if (
+            isinstance(pop_slice, slice)
+            and pop_slice.start is None
+            and pop_slice.stop is None
+            and pop_slice.step is None
+        ):
+            num_allelic_gts = gts.shape[1] * ploidy
+        else:
+            num_allelic_gts = len(pops[pop]) * ploidy
+        num_allelic_gtss.append(num_allelic_gts)
+    num_exp_allelic_gts_per_pop = numpy.array(num_allelic_gtss)
+    num_called_allelic_gts_per_snp = (
+        num_exp_allelic_gts_per_pop[numpy.newaxis, :] - missing_allelic_gts
+    )
+    num_samples = num_called_allelic_gts_per_snp / ploidy
+
+    unbiased_exp_het = (2 * num_samples / (2 * num_samples - 1)) * exp_het
+    return unbiased_exp_het
+
+
+def _calc_exp_het_per_var_for_chunk(
+    chunk, pops, min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT, ploidy=None
+):
+    gts = chunk.gt_array
+    return {
+        "unbiased_exp_het_per_var": _calc_unbiased_exp_het_per_snp(
+            gts, pops, min_num_genotypes=min_num_genotypes, ploidy=ploidy
+        )
+    }
+
+
+def calc_exp_het_stats_per_var(
+    vars_iter: Iterator[ArraysChunk],
+    pops: list[str] | None = None,
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
+    ploidy=None,
+    hist_kwargs=None,
+):
+    if hist_kwargs is None:
+        hist_kwargs = {}
+    hist_kwargs["range"] = hist_kwargs.get("range", (0, 1))
+
+    samples, variants = _get_samples_from_variants(vars_iter)
+    pops = _calc_pops_idxs(pops, samples)
+
+    return _calc_stats_per_var(
+        variants=variants,
+        calc_stats_for_chunk=partial(
+            _calc_exp_het_per_var_for_chunk,
+            pops=pops,
+            min_num_genotypes=min_num_genotypes,
+            ploidy=ploidy,
+        ),
+        get_stats_for_chunk_result=lambda x: x["unbiased_exp_het_per_var"],
         hist_kwargs=hist_kwargs,
     )
