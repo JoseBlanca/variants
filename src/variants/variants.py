@@ -27,6 +27,9 @@ class DirWithMetadata:
 
             if not self.path.exists():
                 self.path.mkdir()
+        else:
+            if not self.path.exists():
+                raise ValueError(f"dir does not exists: {dir}")
 
     def _get_metadata_path(self):
         return self.path / "metadata.json"
@@ -281,8 +284,23 @@ class Genotypes:
         return self._gts.shape
 
     def get_rows(self, index):
+        if isinstance(index, pandas.core.arrays.boolean.BooleanArray):
+            index = index.to_numpy(dtype=bool)
+
         gts = self._gts[index, ...]
         return self.__class__(genotypes=gts, samples=self.samples)
+
+    def get_samples(self, samples):
+        desired_samples = set(samples)
+        final_samples = []
+        sample_idxs = []
+        for idx, sample in enumerate(self.samples):
+            if sample not in desired_samples:
+                continue
+            sample_idxs.append(idx)
+            final_samples.append(sample)
+        gts = self._gts[:, sample_idxs, :]
+        return self.__class__(genotypes=gts, samples=final_samples)
 
     def save(self, path):
         numpy.save(_build_genotypes_gts_path(path), self._gts)
