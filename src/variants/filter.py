@@ -4,7 +4,8 @@ import itertools
 import numpy
 
 from variants.vars_io import GT_ARRAY_ID, VARIANTS_ARRAY_ID
-from variants.iterators import ArraysChunk, resize_chunks, run_pipeline
+from variants.iterators import resize_chunks, run_pipeline
+from variants.variants import Variants, ArraysChunk
 from variants.regions import GenomeLocation
 from variants.pop_stats import (
     _calc_gt_is_missing,
@@ -51,15 +52,25 @@ def _check_vars_in_regions(chroms, poss, regions_to_keep):
     return in_any_region
 
 
-def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_keep):
-    gts = chunk[GT_ARRAY_ID].values
+def _flt_chunk(
+    chunk, max_obs_het, max_missing_rate, max_maf, regions_to_keep, samples_to_keep
+):
+    if regions_to_keep:
+        variants_info = chunk[VARIANTS_ARRAY_ID]
+
+    gts = chunk[GT_ARRAY_ID]
+
+    if samples_to_keep:
+        gts = gts.get_samples(samples_to_keep)
+        chunk = Variants(ArraysChunk({GT_ARRAY_ID: gts}))
+
+    gts = gts.values
 
     remove_mask = numpy.zeros((chunk.num_rows), dtype=bool)
     filtering_info = {"num_vars_removed_per_filter": {}}
 
     gt_is_missing = None
     if regions_to_keep:
-        variants_info = chunk[VARIANTS_ARRAY_ID]
         chroms = variants_info["chrom"].values
         poss = variants_info["pos"].values
         in_any_region = _check_vars_in_regions(chroms, poss, regions_to_keep)
@@ -74,10 +85,10 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_kee
         remove_mask = _update_remove_mask(
             remove_mask, this_remove_mask, filtering_info, "missing_rate"
         )
-    if max_var_obs_het < 1:
+    if max_obs_het < 1:
         gt_is_missing = _calc_gt_is_missing(gts, gt_is_missing)
         obs_het_rate = _calc_obs_het_rate_per_var(gts, gt_is_missing=gt_is_missing)
-        this_remove_mask = obs_het_rate > max_var_obs_het
+        this_remove_mask = obs_het_rate > max_obs_het
         remove_mask = _update_remove_mask(
             remove_mask, this_remove_mask, filtering_info, "obs_het"
         )
@@ -95,8 +106,10 @@ def _flt_chunk(chunk, max_var_obs_het, max_missing_rate, max_maf, regions_to_kee
 
 
 class _ChunkFilterer:
-    def __init__(self, max_var_obs_het, max_missing_rate, max_maf, regions_to_keep):
-        self.max_var_obs_het = max_var_obs_het
+    def __init__(
+        self, max_obs_het, max_missing_rate, max_maf, regions_to_keep, samples_to_keep
+    ):
+        self.max_obs_het = max_obs_het
         self.max_missing_rate = max_missing_rate
         self.max_maf = max_maf
 
@@ -106,16 +119,18 @@ class _ChunkFilterer:
                 for chrom, start, end in regions_to_keep
             ]
         self.regions_to_keep = regions_to_keep
+        self.samples_to_keep = samples_to_keep
 
         self.stats = None
 
     def __call__(self, chunk):
         flt_chunk_res = _flt_chunk(
             chunk,
-            max_var_obs_het=self.max_var_obs_het,
+            max_obs_het=self.max_obs_het,
             max_missing_rate=self.max_missing_rate,
             max_maf=self.max_maf,
             regions_to_keep=self.regions_to_keep,
+            samples_to_keep=self.samples_to_keep,
         )
 
         if self.stats is None:
@@ -149,18 +164,25 @@ def _add_samples_to_source_metadata(chunk, samples):
 class VariantFilterer:
     def __init__(
         self,
-        max_var_obs_het: float = 1.0,
+        max_obs_het: float = 1.0,
         max_missing_rate: float = 1.0,
         max_maf: float = 1.0,
         num_variants_per_result_chunk: int | None = None,
         regions_to_keep: list[tuple[str, int, int]] | None = None,
         desired_arrays: list[str] | None = None,
+        samples_to_keep: list[str] | None = None,
     ):
+        if samples_to_keep and desired_arrays and desired_arrays != [GT_ARRAY_ID]:
+            raise ValueError("If samples are filtered, only GT array should remain")
+        if samples_to_keep:
+            desired_arrays = [GT_ARRAY_ID]
+
         self._filter_chunk = _ChunkFilterer(
-            max_var_obs_het=max_var_obs_het,
+            max_obs_het=max_obs_het,
             max_missing_rate=max_missing_rate,
             max_maf=max_maf,
             regions_to_keep=regions_to_keep,
+            samples_to_keep=samples_to_keep,
         )
 
         self.num_variants_per_result_chunk = num_variants_per_result_chunk

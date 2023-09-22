@@ -22,7 +22,7 @@ def test_filter_vars():
         vars = get_sample_variants()
         filterer = VariantFilterer(
             max_missing_rate=max_missing_rate,
-            max_var_obs_het=max_obs_het,
+            max_obs_het=max_obs_het,
             max_maf=max_maf,
         )
         flt_vars = list(filterer(vars))
@@ -36,3 +36,11 @@ def test_filter_by_region():
     flt_vars = list(filterer(vars))
     flt_vars[0]["variants"]["pos"] == [14270, 17330]
     assert filterer.stats["num_vars_removed_per_filter"] == {"desired_region": 3}
+
+
+def test_filter_samples():
+    vars = get_sample_variants()
+    filterer = VariantFilterer(samples_to_keep=["NA00002", "NA00003"])
+    flt_vars = list(filterer(vars))
+    assert flt_vars[0].samples == ["NA00002", "NA00003"]
+    flt_vars[0].num_rows == 5
