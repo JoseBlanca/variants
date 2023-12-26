@@ -1,9 +1,11 @@
 from pathlib import Path
 import io
 import gzip
+import warnings
 
+with warnings.catch_warnings(action="ignore"):
+    import pandas
 import numpy
-import pandas
 
 from variants.iterators import ArraysChunk
 from variants import read_vcf

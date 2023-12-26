@@ -5,10 +5,11 @@ from io import BytesIO
 from pathlib import Path
 import copy
 import math
+import warnings
 
-
+with warnings.catch_warnings(action="ignore"):
+    import pandas
 import numpy
-import pandas
 import more_itertools
 import allel
 
