@@ -76,6 +76,14 @@ def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk, samples):
     for lines_in_chunk in more_itertools.chunked(lines, num_variants_per_chunk):
         vcf_chunk = BytesIO(b"".join(header_lines + lines_in_chunk))
         allel_arrays = allel.read_vcf(vcf_chunk)
+
+        # workaround for a bug in scikit allele when GT format is just GT
+        fields = list(allel_arrays.keys())
+        if "calldata/GT" not in fields:
+            fields.append("calldata/GT")
+            vcf_chunk.seek(0)
+            allel_arrays = allel.read_vcf(vcf_chunk, fields=fields)
+
         del vcf_chunk
 
         variants_dframe = {}
@@ -92,7 +100,6 @@ def _get_vcf_chunks(lines, source_metadata, num_variants_per_chunk, samples):
         ref = ref.reshape((ref.shape[0], 1))
         alt = allel_arrays["variants/ALT"]
         alleles = pandas.DataFrame(numpy.hstack([ref, alt]), dtype=STRING_PANDAS_DTYPE)
-
         gts = Genotypes(allel_arrays["calldata/GT"], samples=samples)
 
         orig_vcf = pandas.Series(lines_in_chunk, dtype=STRING_PANDAS_DTYPE)
