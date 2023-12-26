@@ -466,7 +466,7 @@ def calc_jost_dest_dist_between_pops_per_var(
     pop1: list[str],
     pop2: list[str],
     min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
-) -> Iterator[ArraysChunk]:
+) -> Iterator[pandas.Series]:
     sorted_pop_ids = ["pop1", "pop2"]
     pops = {"pop1": pop1, "pop2": pop2}
 
