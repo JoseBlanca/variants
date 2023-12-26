@@ -190,7 +190,7 @@ def _reduce_kosman_dists(acummulated_dists_and_snps, new_dists_and_snps):
 
 def calc_pairwise_kosman_dists(
     vars_iter: Iterator[Variants], min_num_snps=None, num_processes=2
-):
+) -> Distances:
     """It calculates the distance between individuals using the Kosman
     distance.
 
