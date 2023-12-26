@@ -15,6 +15,8 @@ from variants.globals import (
     GT_ARRAY_ID,
     MISSING_INT,
     VARIANTS_ARRAY_ID,
+    CHROM_VARIANTS_COL,
+    POS_VARIANTS_COL,
     MIN_NUM_GENOTYPES_FOR_POP_STAT,
 )
 from variants.variants import Variants
@@ -464,7 +466,7 @@ def _calc_exp_het_per_var_for_chunk(
 
 def calc_exp_het_stats_per_var(
     vars_iter: Iterator[ArraysChunk],
-    pops: list[str] | None = None,
+    pops: dict[str, list[str]] | None = None,
     min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
     ploidy=None,
     hist_kwargs=None,
@@ -487,3 +489,36 @@ def calc_exp_het_stats_per_var(
         get_stats_for_chunk_result=lambda x: x["unbiased_exp_het_per_var"],
         hist_kwargs=hist_kwargs,
     )
+
+
+def create_chrom_pos_pandas_index_from_vars(vars: Variants):
+    if VARIANTS_ARRAY_ID in vars.arrays:
+        variants_info = vars.arrays[VARIANTS_ARRAY_ID]
+        chroms = variants_info[CHROM_VARIANTS_COL]
+        poss = variants_info[POS_VARIANTS_COL]
+        index = pandas.MultiIndex.from_arrays(
+            [chroms, poss], names=[CHROM_VARIANTS_COL, POS_VARIANTS_COL]
+        )
+    else:
+        index = pandas.RangeIndex(vars.num_rows)
+    return index
+
+
+def calc_exp_het_per_var(
+    vars_iter: Iterator[ArraysChunk],
+    pops: dict[str, list[str]] | None = None,
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
+    ploidy=None,
+):
+    samples, vars_iter = _get_samples_from_variants(vars_iter)
+    pops = _calc_pops_idxs(pops, samples)
+
+    for vars in vars_iter:
+        exp_het = _calc_exp_het_per_var_for_chunk(
+            vars,
+            pops=pops,
+            min_num_genotypes=min_num_genotypes,
+            ploidy=ploidy,
+        )["unbiased_exp_het_per_var"]
+        exp_het.index = create_chrom_pos_pandas_index_from_vars(vars)
+        yield exp_het

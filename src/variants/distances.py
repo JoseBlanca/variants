@@ -6,19 +6,17 @@ import pandas
 import scipy
 
 from variants.variants import Variants
-from variants.iterators import run_pipeline, _peek_vars_iter, ArraysChunk
+from variants.iterators import run_pipeline, _peek_vars_iter
 from variants.globals import (
     MISSING_INT,
     MIN_NUM_GENOTYPES_FOR_POP_STAT,
-    VARIANTS_ARRAY_ID,
-    CHROM_VARIANTS_COL,
-    POS_VARIANTS_COL,
 )
 from variants.pop_stats import (
     _calc_pops_idxs,
     _calc_obs_het_per_var_for_gts,
     _count_alleles_per_var,
     _get_metadata_from_variants,
+    create_chrom_pos_pandas_index_from_vars,
 )
 
 
@@ -433,19 +431,6 @@ def calc_jost_dest_pop_distance(
 
     dists = Distances(dists, sorted_pop_ids)
     return dists
-
-
-def create_chrom_pos_pandas_index_from_vars(vars: Variants):
-    if VARIANTS_ARRAY_ID in vars.arrays:
-        variants_info = vars.arrays[VARIANTS_ARRAY_ID]
-        chroms = variants_info[CHROM_VARIANTS_COL]
-        poss = variants_info[POS_VARIANTS_COL]
-        index = pandas.MultiIndex.from_arrays(
-            [chroms, poss], names=[CHROM_VARIANTS_COL, POS_VARIANTS_COL]
-        )
-    else:
-        index = pandas.RangeIndex(vars.num_rows)
-    return index
 
 
 class _DestDistCalculator(_DestPopHsHtCalculator):

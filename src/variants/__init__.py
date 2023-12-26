@@ -13,6 +13,7 @@ from .pop_stats import (
     calc_major_allele_stats_per_var,
     calc_qual_stats_per_var,
     calc_exp_het_stats_per_var,
+    calc_exp_het_per_var,
 )
 from .filter import VariantFilterer
 from .iterators import VariantsCounter, sample_n_vars_per_genomic_window
