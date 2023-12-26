@@ -1,15 +1,27 @@
+import warnings
+
+with warnings.catch_warnings(action="ignore"):
+    import pandas
 import numpy
 
 from .test_utils import get_big_vcf
 from variants import read_vcf
 from variants.variants import Genotypes, Variants
-from variants.globals import GT_ARRAY_ID
+from variants.globals import (
+    GT_ARRAY_ID,
+    VARIANTS_ARRAY_ID,
+    CHROM_VARIANTS_COL,
+    POS_VARIANTS_COL,
+)
+
+
 from variants.iterators import take_n_variants
 from variants.distances import (
     calc_pairwise_kosman_dists,
     _kosman,
     _IndiPairwiseCalculator,
     calc_jost_dest_pop_distance,
+    calc_jost_dest_dist_between_pops_per_var,
 )
 from variants.pop_stats import get_different_alleles
 
@@ -274,9 +286,26 @@ def test_dest_jost_distance():
     ]
     samples = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     gts = Genotypes(numpy.array(gts), samples=samples)
-    snps = Variants(arrays={GT_ARRAY_ID: gts})
+    variants_info = pandas.DataFrame(
+        {CHROM_VARIANTS_COL: ["chrom1", "chrom2"], POS_VARIANTS_COL: [1000, 500]}
+    )
+    snps = Variants(arrays={GT_ARRAY_ID: gts, VARIANTS_ARRAY_ID: variants_info})
 
-    pops = {"pop1": [1, 2, 3, 4, 5], "pop2": [6, 7, 8, 9, 10, 11]}
+    pop1 = [1, 2, 3, 4, 5]
+    pop2 = [6, 7, 8, 9, 10, 11]
+    pops = {"pop1": pop1, "pop2": pop2}
+
+    dists = calc_jost_dest_dist_between_pops_per_var(
+        iter([snps]), pop1=pop1, pop2=pop2, min_num_genotypes=0
+    )
+    assert numpy.allclose(list(dists)[0], [0.65490196, 0.65490196])
+
+    snps = Variants(arrays={GT_ARRAY_ID: gts})
+    dists = calc_jost_dest_dist_between_pops_per_var(
+        iter([snps]), pop1=pop1, pop2=pop2, min_num_genotypes=0
+    )
+    assert numpy.allclose(list(dists)[0], [0.65490196, 0.65490196])
+
     alleles = get_different_alleles(iter([snps]))
 
     dists = calc_jost_dest_pop_distance(iter([snps]), pops=pops, min_num_genotypes=0)

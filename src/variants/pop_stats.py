@@ -267,14 +267,20 @@ def _calc_maf_per_var_for_chunk(
     return {"major_allele_freqs_per_var": major_allele_freqs}
 
 
-def _get_samples_from_variants(variants):
+def _get_metadata_from_variants(variants):
     try:
         chunk = next(variants)
     except StopIteration:
         raise ValueError("No variants")
     variants = itertools.chain([chunk], variants)
     samples = get_samples_from_chunk(chunk)
-    return samples, variants
+    ploidy = chunk.ploidy
+    return {"samples": samples, "ploidy": ploidy}, variants
+
+
+def _get_samples_from_variants(variants):
+    metadata, variants = _get_metadata_from_variants(variants)
+    return metadata["samples"], variants
 
 
 def calc_major_allele_stats_per_var(

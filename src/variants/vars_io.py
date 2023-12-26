@@ -21,23 +21,26 @@ from variants.globals import (
     ALLELES_ARRAY_ID,
     ORIG_VCF_ARRAY_ID,
     DEFAULT_NUM_VARIANTS_PER_CHUNK,
+    CHROM_VARIANTS_COL,
+    POS_VARIANTS_COL,
+    QUAL_VARIANTS_COL,
 )
 
 STRING_PANDAS_DTYPE = "string[pyarrow]"
 CHROM_FIELD = {
     "scikit-allel_path": "variants/CHROM",
-    "dframe_column": "chrom",
+    "dframe_column": CHROM_VARIANTS_COL,
     "pandas_dtype": STRING_PANDAS_DTYPE,
 }
 POS_FIELD = {
     "scikit-allel_path": "variants/POS",
-    "dframe_column": "pos",
+    "dframe_column": POS_VARIANTS_COL,
     "pandas_dtype": pandas.Int64Dtype(),
 }
 
 QUAL_FIELD = {
     "scikit-allel_path": "variants/QUAL",
-    "dframe_column": "qual",
+    "dframe_column": QUAL_VARIANTS_COL,
     "pandas_dtype": pandas.Float32Dtype(),
 }
 

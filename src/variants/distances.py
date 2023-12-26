@@ -7,12 +7,18 @@ import scipy
 
 from variants.variants import Variants
 from variants.iterators import run_pipeline, _peek_vars_iter, ArraysChunk
-from variants.globals import MISSING_INT, MIN_NUM_GENOTYPES_FOR_POP_STAT
+from variants.globals import (
+    MISSING_INT,
+    MIN_NUM_GENOTYPES_FOR_POP_STAT,
+    VARIANTS_ARRAY_ID,
+    CHROM_VARIANTS_COL,
+    POS_VARIANTS_COL,
+)
 from variants.pop_stats import (
     _calc_pops_idxs,
     _calc_obs_het_per_var_for_gts,
     _count_alleles_per_var,
-    _get_samples_from_variants,
+    _get_metadata_from_variants,
 )
 
 
@@ -245,7 +251,6 @@ def _calc_pairwise_dest(
 
     num_pops = 2
     pop1, pop2 = sorted_pop_ids
-    # print(alleles)
 
     res = _count_alleles_per_var(
         gts,
@@ -318,7 +323,7 @@ def _calc_pairwise_dest(
     return {"hs": hs_in_chunk, "ht": ht_in_chunk, "num_vars": num_vars_in_chunk}
 
 
-class _DestPopDistCalculator:
+class _DestPopHsHtCalculator:
     def __init__(self, pop_idxs, sorted_pop_ids, alleles, min_num_genotypes, ploidy):
         self.pop_idxs = pop_idxs
         self.pop_ids = sorted_pop_ids
@@ -378,6 +383,22 @@ def _accumulate_dest_results(accumulated_result, new_result):
     return {"hs": accumulated_hs, "ht": accumulated_ht, "num_vars": total_num_vars}
 
 
+def _calc_jost_from_ht_hs(sorted_pop_ids, hs, ht, num_vars):
+    tot_n_pops = len(sorted_pop_ids)
+    dists = numpy.empty(int((tot_n_pops**2 - tot_n_pops) / 2))
+    dists[:] = numpy.nan
+    num_pops = 2
+    for idx, (pop_id1, pop_id2) in enumerate(itertools.combinations(sorted_pop_ids, 2)):
+        with numpy.errstate(invalid="ignore"):
+            corrected_hs = hs.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
+            corrected_ht = ht.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
+        dest = (num_pops / (num_pops - 1)) * (
+            (corrected_ht - corrected_hs) / (1 - corrected_hs)
+        )
+        dists[idx] = dest
+    return dists
+
+
 def calc_jost_dest_pop_distance(
     vars_iter: Iterator[Variants],
     pops: dict[list[str]],
@@ -391,7 +412,7 @@ def calc_jost_dest_pop_distance(
     ploidy = chunk.ploidy
     pop_idxs = _calc_pops_idxs(pops, samples)
     sorted_pop_ids = sorted(pop_idxs.keys())
-    calc_dest_dists = _DestPopDistCalculator(
+    calc_dest_dists = _DestPopHsHtCalculator(
         pop_idxs=pop_idxs,
         sorted_pop_ids=sorted_pop_ids,
         alleles=alleles,
@@ -406,21 +427,59 @@ def calc_jost_dest_pop_distance(
     accumulated_ht = res["ht"]
     num_vars = res["num_vars"]
 
-    tot_n_pops = len(pops)
-    dists = numpy.empty(int((tot_n_pops**2 - tot_n_pops) / 2))
-    dists[:] = numpy.nan
-    num_pops = 2
-    for idx, (pop_id1, pop_id2) in enumerate(itertools.combinations(sorted_pop_ids, 2)):
-        with numpy.errstate(invalid="ignore"):
-            corrected_hs = (
-                accumulated_hs.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
-            )
-            corrected_ht = (
-                accumulated_ht.loc[pop_id1, pop_id2] / num_vars.loc[pop_id1, pop_id2]
-            )
-        dest = (num_pops / (num_pops - 1)) * (
-            (corrected_ht - corrected_hs) / (1 - corrected_hs)
-        )
-        dists[idx] = dest
+    dists = _calc_jost_from_ht_hs(
+        sorted_pop_ids, accumulated_hs, accumulated_ht, num_vars
+    )
+
     dists = Distances(dists, sorted_pop_ids)
     return dists
+
+
+def create_chrom_pos_pandas_index_from_vars(vars: Variants):
+    if VARIANTS_ARRAY_ID in vars.arrays:
+        variants_info = vars.arrays[VARIANTS_ARRAY_ID]
+        chroms = variants_info[CHROM_VARIANTS_COL]
+        poss = variants_info[POS_VARIANTS_COL]
+        index = pandas.MultiIndex.from_arrays(
+            [chroms, poss], names=[CHROM_VARIANTS_COL, POS_VARIANTS_COL]
+        )
+    else:
+        index = pandas.RangeIndex(vars.num_rows)
+    return index
+
+
+class _DestDistCalculator(_DestPopHsHtCalculator):
+    def __call__(self, vars: Variants):
+        res = super().__call__(vars)
+        dists = _calc_jost_from_ht_hs(
+            self.pop_ids, hs=res["hs"], ht=res["ht"], num_vars=res["num_vars"]
+        )
+        dists_per_var = dists[0]
+        dists_per_var = pandas.Series(
+            dists_per_var, index=create_chrom_pos_pandas_index_from_vars(vars)
+        )
+        return dists_per_var
+
+
+def calc_jost_dest_dist_between_pops_per_var(
+    vars_iter: Iterator[Variants],
+    pop1: list[str],
+    pop2: list[str],
+    min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
+) -> Iterator[ArraysChunk]:
+    sorted_pop_ids = ["pop1", "pop2"]
+    pops = {"pop1": pop1, "pop2": pop2}
+
+    metadata, vars_iter = _get_metadata_from_variants(vars_iter)
+    pop_idxs = _calc_pops_idxs(pops, metadata["samples"])
+
+    calc_dest_dists = _DestDistCalculator(
+        pop_idxs=pop_idxs,
+        sorted_pop_ids=sorted_pop_ids,
+        alleles=None,
+        min_num_genotypes=min_num_genotypes,
+        ploidy=metadata["ploidy"],
+    )
+
+    res = run_pipeline(vars_iter, map_functs=[calc_dest_dists])
+    return res
