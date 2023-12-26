@@ -16,3 +16,4 @@ from .pop_stats import (
 )
 from .filter import VariantFilterer
 from .iterators import VariantsCounter, sample_n_vars_per_genomic_window
+from .distances import calc_pairwise_kosman_dists
