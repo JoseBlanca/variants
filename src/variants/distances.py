@@ -6,12 +6,13 @@ import pandas
 import scipy
 
 from variants.variants import Variants
-from variants.iterators import run_pipeline, _peek_vars_iter
+from variants.iterators import run_pipeline, _peek_vars_iter, ArraysChunk
 from variants.globals import MISSING_INT, MIN_NUM_GENOTYPES_FOR_POP_STAT
 from variants.pop_stats import (
     _calc_pops_idxs,
     _calc_obs_het_per_var_for_gts,
     _count_alleles_per_var,
+    _get_samples_from_variants,
 )
 
 
@@ -244,12 +245,13 @@ def _calc_pairwise_dest(
 
     num_pops = 2
     pop1, pop2 = sorted_pop_ids
+    # print(alleles)
 
     res = _count_alleles_per_var(
         gts,
         pops=pop_idxs,
         calc_freqs=True,
-        alleles=alleles,
+        alleles=None,
         min_num_genotypes=min_num_genotypes,
     )
     allele_freq1 = res["counts"][pop1]["allelic_freqs"].values
@@ -379,9 +381,9 @@ def _accumulate_dest_results(accumulated_result, new_result):
 def calc_jost_dest_pop_distance(
     vars_iter: Iterator[Variants],
     pops: dict[list[str]],
-    alleles: list[int],
+    alleles: list[int] | None = None,
     min_num_genotypes=MIN_NUM_GENOTYPES_FOR_POP_STAT,
-):
+) -> Distances:
     """This is an implementation of the formulas proposed in GenAlex"""
 
     chunk, vars_iter = _peek_vars_iter(vars_iter)

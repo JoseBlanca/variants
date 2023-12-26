@@ -279,9 +279,7 @@ def test_dest_jost_distance():
     pops = {"pop1": [1, 2, 3, 4, 5], "pop2": [6, 7, 8, 9, 10, 11]}
     alleles = get_different_alleles(iter([snps]))
 
-    dists = calc_jost_dest_pop_distance(
-        iter([snps]), pops=pops, alleles=alleles, min_num_genotypes=0
-    )
+    dists = calc_jost_dest_pop_distance(iter([snps]), pops=pops, min_num_genotypes=0)
     assert numpy.allclose(dists.dist_vector, [0.65490196])
 
     dists = calc_jost_dest_pop_distance(
