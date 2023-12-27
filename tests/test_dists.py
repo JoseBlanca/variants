@@ -298,14 +298,15 @@ def test_dest_jost_distance():
     dists = calc_jost_dest_dist_between_pops_per_var(
         iter([snps]), pop1=pop1, pop2=pop2, min_num_genotypes=0
     )
-    print(list(dists))
-    assert numpy.allclose(list(dists)[0], [0.490909, 0.779310])
+    values = list(dists)[0].values
+    assert numpy.allclose(values, [0.49090909, 0.77931034])
 
     snps = Variants(arrays={GT_ARRAY_ID: gts})
     dists = calc_jost_dest_dist_between_pops_per_var(
         iter([snps]), pop1=pop1, pop2=pop2, min_num_genotypes=0
     )
-    assert numpy.allclose(list(dists)[0], [0.65490196, 0.65490196])
+    values = list(dists)[0].values
+    assert numpy.allclose(values, [0.49090909, 0.77931034])
 
     alleles = get_different_alleles(iter([snps]))
 
