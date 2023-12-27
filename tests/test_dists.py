@@ -298,7 +298,8 @@ def test_dest_jost_distance():
     dists = calc_jost_dest_dist_between_pops_per_var(
         iter([snps]), pop1=pop1, pop2=pop2, min_num_genotypes=0
     )
-    assert numpy.allclose(list(dists)[0], [0.65490196, 0.65490196])
+    print(list(dists))
+    assert numpy.allclose(list(dists)[0], [0.490909, 0.779310])
 
     snps = Variants(arrays={GT_ARRAY_ID: gts})
     dists = calc_jost_dest_dist_between_pops_per_var(

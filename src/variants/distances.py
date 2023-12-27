@@ -318,7 +318,13 @@ def _calc_pairwise_dest(
     num_vars_in_chunk = numpy.count_nonzero(~numpy.isnan(corrected_hs))
     hs_in_chunk = numpy.nansum(corrected_hs)
     ht_in_chunk = numpy.nansum(corrected_ht)
-    return {"hs": hs_in_chunk, "ht": ht_in_chunk, "num_vars": num_vars_in_chunk}
+    return {
+        "hs": hs_in_chunk,
+        "ht": ht_in_chunk,
+        "num_vars": num_vars_in_chunk,
+        "hs_per_var": corrected_hs,
+        "ht_per_var": corrected_ht,
+    }
 
 
 class _DestPopHsHtCalculator:
@@ -433,13 +439,26 @@ def calc_jost_dest_pop_distance(
     return dists
 
 
+def _calc_jost_from_ht_hs_per_var(sorted_pop_ids, hs, ht):
+    num_pops = 2
+    pop_id1, pop_id2 = sorted_pop_ids
+    dest = (num_pops / (num_pops - 1)) * ((ht - hs) / (1 - hs))
+    return dest
+
+
 class _DestDistCalculator(_DestPopHsHtCalculator):
     def __call__(self, vars: Variants):
-        res = super().__call__(vars)
-        dists = _calc_jost_from_ht_hs(
-            self.pop_ids, hs=res["hs"], ht=res["ht"], num_vars=res["num_vars"]
+        res = _calc_pairwise_dest(
+            gts=vars.gt_array,
+            sorted_pop_ids=self.pop_ids,
+            pop_idxs=self.pop_idxs,
+            alleles=None,
+            min_num_genotypes=self.min_num_genotypes,
+            ploidy=self.ploidy,
         )
-        dists_per_var = dists[0]
+        dists_per_var = _calc_jost_from_ht_hs_per_var(
+            self.pop_ids, hs=res["hs_per_var"], ht=res["ht_per_var"]
+        )
         dists_per_var = pandas.Series(
             dists_per_var, index=create_chrom_pos_pandas_index_from_vars(vars)
         )
